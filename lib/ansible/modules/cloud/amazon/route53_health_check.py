@@ -145,17 +145,25 @@ from ansible.module_utils.ec2 import ec2_argument_spec, get_aws_connection_info
 #  string_match if not previously enabled
 def find_health_check(conn, wanted):
     """Searches for health checks that have the exact same set of immutable values"""
-    for check in conn.get_list_health_checks().HealthChecks:
-        config = check.HealthCheckConfig
-        if (
-            config.get('IPAddress') == wanted.ip_addr and
-            config.get('FullyQualifiedDomainName') == wanted.fqdn and
-            config.get('Type') == wanted.hc_type and
-            config.get('RequestInterval') == str(wanted.request_interval) and
-            config.get('Port') == str(wanted.port)
-        ):
-            return check
-    return None
+
+    results = conn.get_list_health_checks()
+
+    while True:
+        for check in results.HealthChecks:
+            config = check.HealthCheckConfig
+            if (
+                config.get('IPAddress') == wanted.ip_addr and
+                config.get('FullyQualifiedDomainName') == wanted.fqdn and
+                config.get('Type') == wanted.hc_type and
+                config.get('RequestInterval') == str(wanted.request_interval) and
+                config.get('Port') == str(wanted.port)
+            ):
+                return check
+
+        if (results.IsTruncated == 'true'):
+            results = conn.get_list_health_checks(marker=results.NextMarker)
+        else:
+            return None
 
 
 def to_health_check(config):
@@ -203,6 +211,7 @@ def to_template_params(health_check):
     if health_check.string_match:
         params['string_match_part'] = HealthCheck.XMLStringMatchPart % {'string_match': health_check.string_match}
     return params
+
 
 XMLResourcePathPart = """<ResourcePath>%(resource_path)s</ResourcePath>"""
 

@@ -76,7 +76,7 @@ Function Convert-CollectionToList($collection) {
 }
 
 Function Compare-Values($current, $new) {
-    if ($current -eq $null) {
+    if ($null -eq $current) {
         return $true
     }
 
@@ -119,7 +119,7 @@ Function Convert-ToPropertyValue($pool, $attribute_key, $attribute_value) {
         foreach ($key in $attribute_key_split) {
             $attribute_meta = $parent.Attributes | Where-Object { $_.Name -eq $key }
             $parent = $parent.$key
-            if ($attribute_meta -eq $null) {
+            if ($null -eq $attribute_meta) {
                 $attribute_meta = $parent
             }
         }
@@ -152,11 +152,11 @@ Function Convert-ToPropertyValue($pool, $attribute_key, $attribute_value) {
                         }
                     }
                 }
-            }            
+            }
         }
         # Try and cast the variable using the chosen type, revert to the default if it fails
         Set-Variable -Name casted_value -Value ($value -as ([type] $attribute_meta.TypeName))
-        if ($casted_value -eq $null) {
+        if ($null -eq $casted_value) {
             $value
         } else {
             $casted_value
@@ -167,9 +167,9 @@ Function Convert-ToPropertyValue($pool, $attribute_key, $attribute_value) {
 }
 
 # Ensure WebAdministration module is loaded
-if ((Get-Module -Name "WebAdministration" -ErrorAction SilentlyContinue) -eq $null) {
+if ($null -eq (Get-Module -Name "WebAdministration" -ErrorAction SilentlyContinue)) {
     Import-Module WebAdministration
-    $web_admin_dll_path = Join-Path $env:SystemRoot system32\inetsrv\Microsoft.Web.Administration.dll 
+    $web_admin_dll_path = Join-Path $env:SystemRoot system32\inetsrv\Microsoft.Web.Administration.dll
     Add-Type -Path $web_admin_dll_path
 }
 
@@ -189,7 +189,7 @@ if ($state -eq "absent") {
     if (-not $pool) {
         if (-not $check_mode) {
             try {
-                New-WebAppPool -Name $name
+                New-WebAppPool -Name $name > $null
             } catch {
                 Fail-Json $result "Failed to create new Web App Pool $($name): $($_.Exception.Message)"
             }
@@ -220,7 +220,7 @@ if ($state -eq "absent") {
                 }
                 foreach ($value in $new_value) {
                     try {
-                        New-ItemProperty -Path IIS:\AppPools\$name -Name $attribute_key -Value @{value=$value} -WhatIf:$check_mode
+                        New-ItemProperty -Path IIS:\AppPools\$name -Name $attribute_key -Value @{value=$value} -WhatIf:$check_mode > $null
                     } catch {
                         Fail-Json -obj $result -message "Failed to add new attribute to Web App Pool $name. Attribute: $attribute_key, Value: $value, Exception: $($_.Exception.Message)"
                     }
@@ -241,7 +241,7 @@ if ($state -eq "absent") {
         if ($state -eq "started" -or $state -eq "restarted") {
             if (-not $check_mode) {
                 try {
-                    Start-WebAppPool -Name $name
+                    Start-WebAppPool -Name $name > $null
                 } catch {
                     Fail-Json $result "Failed to start Web App Pool $($name): $($_.Exception.Message)"
                 }
@@ -252,7 +252,7 @@ if ($state -eq "absent") {
         if ($state -eq "stopped") {
             if (-not $check_mode) {
                 try {
-                    Stop-WebAppPool -Name $name
+                    Stop-WebAppPool -Name $name > $null
                 } catch {
                     Fail-Json $result "Failed to stop Web App Pool $($name): $($_.Exception.Message)"
                 }
@@ -261,7 +261,7 @@ if ($state -eq "absent") {
         } elseif ($state -eq "restarted") {
             if (-not $check_mode) {
                 try {
-                    Restart-WebAppPool -Name $name
+                    Restart-WebAppPool -Name $name > $null
                 } catch {
                     Fail-Json $result "Failed to restart Web App Pool $($name): $($_.Exception.Message)"
                 }

@@ -21,16 +21,21 @@ __metaclass__ = type
 
 import re
 import operator as py_operator
-from collections import MutableMapping, MutableSequence
 from distutils.version import LooseVersion, StrictVersion
 
 from ansible import errors
+from ansible.module_utils._text import to_text
+from ansible.module_utils.common._collections_compat import MutableMapping, MutableSequence
+from ansible.module_utils.parsing.convert_bool import boolean
+from ansible.utils.display import Display
+
+display = Display()
 
 
 def failed(result):
     ''' Test if task result yields failed '''
     if not isinstance(result, MutableMapping):
-        raise errors.AnsibleFilterError("The failed test expects a dictionary")
+        raise errors.AnsibleFilterError("The 'failed' test expects a dictionary")
     return result.get('failed', False)
 
 
@@ -39,10 +44,22 @@ def success(result):
     return not failed(result)
 
 
+def unreachable(result):
+    ''' Test if task result yields unreachable '''
+    if not isinstance(result, MutableMapping):
+        raise errors.AnsibleFilterError("The 'unreachable' test expects a dictionary")
+    return result.get('unreachable', False)
+
+
+def reachable(result):
+    ''' Test if task result yields reachable '''
+    return not unreachable(result)
+
+
 def changed(result):
     ''' Test if task result yields changed '''
     if not isinstance(result, MutableMapping):
-        raise errors.AnsibleFilterError("The changed test expects a dictionary")
+        raise errors.AnsibleFilterError("The 'changed' test expects a dictionary")
     if 'changed' not in result:
         changed = False
         if (
@@ -62,8 +79,36 @@ def changed(result):
 def skipped(result):
     ''' Test if task result yields skipped '''
     if not isinstance(result, MutableMapping):
-        raise errors.AnsibleFilterError("The skipped test expects a dictionary")
+        raise errors.AnsibleFilterError("The 'skipped' test expects a dictionary")
     return result.get('skipped', False)
+
+
+def started(result):
+    ''' Test if async task has started '''
+    if not isinstance(result, MutableMapping):
+        raise errors.AnsibleFilterError("The 'started' test expects a dictionary")
+    if 'started' in result:
+        # For async tasks, return status
+        # NOTE: The value of started is 0 or 1, not False or True :-/
+        return result.get('started', 0) == 1
+    else:
+        # For non-async tasks, warn user, but return as if started
+        display.warning("The 'started' test expects an async task, but a non-async task was tested")
+        return True
+
+
+def finished(result):
+    ''' Test if async task has finished '''
+    if not isinstance(result, MutableMapping):
+        raise errors.AnsibleFilterError("The 'finished' test expects a dictionary")
+    if 'finished' in result:
+        # For async tasks, return status
+        # NOTE: The value of finished is 0 or 1, not False or True :-/
+        return result.get('finished', 0) == 1
+    else:
+        # For non-async tasks, warn user, but return as if finished
+        display.warning("The 'finished' test expects an async task, but a non-async task was tested")
+        return True
 
 
 def regex(value='', pattern='', ignorecase=False, multiline=False, match_type='search'):
@@ -71,14 +116,16 @@ def regex(value='', pattern='', ignorecase=False, multiline=False, match_type='s
         This is likely only useful for `search` and `match` which already
         have their own filters.
     '''
+    # In addition to ensuring the correct type, to_text here will ensure
+    # _fail_with_undefined_error happens if the value is Undefined
+    value = to_text(value, errors='surrogate_or_strict')
     flags = 0
     if ignorecase:
         flags |= re.I
     if multiline:
         flags |= re.M
     _re = re.compile(pattern, flags=flags)
-    _bool = __builtins__.get('bool')
-    return _bool(getattr(_re, match_type, 'search')(value))
+    return bool(getattr(_re, match_type, 'search')(value))
 
 
 def match(value, pattern='', ignorecase=False, multiline=False):
@@ -119,6 +166,34 @@ def version_compare(value, version, operator='eq', strict=False):
         raise errors.AnsibleFilterError('Version comparison: %s' % e)
 
 
+def truthy(value, convert_bool=False):
+    """Evaluate as value for truthiness using python ``bool``
+
+    Optionally, attempt to do a conversion to bool from boolean like values
+    such as ``"false"``, ``"true"``, ``"yes"``, ``"no"``, ``"on"``, ``"off"``, etc.
+
+    .. versionadded:: 2.10
+    """
+    if convert_bool:
+        try:
+            value = boolean(value)
+        except TypeError:
+            pass
+
+    return bool(value)
+
+
+def falsy(value, convert_bool=False):
+    """Evaluate as value for falsiness using python ``bool``
+
+    Optionally, attempt to do a conversion to bool from boolean like values
+    such as ``"false"``, ``"true"``, ``"yes"``, ``"no"``, ``"on"``, ``"off"``, etc.
+
+    .. versionadded:: 2.10
+    """
+    return not truthy(value, convert_bool=convert_bool)
+
+
 class TestModule(object):
     ''' Ansible core jinja2 tests '''
 
@@ -130,6 +205,8 @@ class TestModule(object):
             'succeeded': success,
             'success': success,
             'successful': success,
+            'reachable': reachable,
+            'unreachable': unreachable,
 
             # changed testing
             'changed': changed,
@@ -138,6 +215,10 @@ class TestModule(object):
             # skip testing
             'skipped': skipped,
             'skip': skipped,
+
+            # async testing
+            'finished': finished,
+            'started': started,
 
             # regex
             'match': match,
@@ -151,4 +232,8 @@ class TestModule(object):
             # lists
             'any': any,
             'all': all,
+
+            # truthiness
+            'truthy': truthy,
+            'falsy': falsy,
         }

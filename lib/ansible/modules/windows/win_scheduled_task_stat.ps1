@@ -1,6 +1,6 @@
 #!powershell
 
-# Copyright (c) 2017 Ansible Project
+# Copyright: (c) 2017, Ansible Project
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 #Requires -Module Ansible.ModuleUtils.CamelConversion
@@ -8,6 +8,8 @@
 #Requires -Module Ansible.ModuleUtils.SID
 
 $params = Parse-Args -arguments $args
+$_remote_tmp = Get-AnsibleParam $params "_ansible_remote_tmp" -type "path" -default $env:TMP
+
 $path = Get-AnsibleParam -obj $params -name "path" -type "str" -default "\"
 $name = Get-AnsibleParam -obj $params -name "name" -type "str"
 
@@ -15,7 +17,7 @@ $result = @{
     changed = $false
 }
 
-Add-Type -TypeDefinition @"
+$task_enums = @"
 public enum TASK_ACTION_TYPE
 {
     TASK_ACTION_EXEC          = 0,
@@ -67,14 +69,19 @@ public enum TASK_TRIGGER_TYPE2
 }
 "@
 
+$original_tmp = $env:TMP
+$env:TMP = $_remote_tmp
+Add-Type -TypeDefinition $task_enums
+$env:TMP = $original_tmp
+
 Function Get-PropertyValue($task_property, $com, $property) {
     $raw_value = $com.$property
 
-    if ($raw_value -eq $null) {
+    if ($null -eq $raw_value) {
         return $null
     } elseif ($raw_value.GetType().Name -eq "__ComObject") {
         $com_values = @{}
-        $properties = Get-Member -InputObject $raw_value -MemberType Property | % {
+        Get-Member -InputObject $raw_value -MemberType Property | ForEach-Object {
             $com_value = Get-PropertyValue -task_property $property -com $raw_value -property $_.Name
             $com_values.$($_.Name) = $com_value
         }
@@ -245,7 +252,10 @@ try {
     $result.folder_exists = $true
 } catch {
     $result.folder_exists = $false
-    $task_folder = $null
+    if ($null -ne $name) {
+        $result.task_exists = $false
+    }
+    Exit-Json -obj $result
 }
 
 $folder_tasks = $task_folder.GetTasks(1)
@@ -257,15 +267,15 @@ for ($i = 1; $i -le $folder_tasks.Count; $i++) {
     $folder_task_names += $task_name
     $folder_task_count += 1
 
-    if ($name -ne $null -and $task_name -eq $name) {
+    if ($null -ne $name -and $task_name -eq $name) {
         $task = $folder_tasks.Item($i)
     }
 }
 $result.folder_task_names = $folder_task_names
 $result.folder_task_count = $folder_task_count
 
-if ($name -ne $null) {
-    if ($task -ne $null) {
+if ($null -ne $name) {
+    if ($null -ne $task) {
         $result.task_exists = $true
 
         # task state
@@ -287,7 +297,7 @@ if ($name -ne $null) {
             $property_name = $property -replace "_"
             $result.$property = @{}
             $values = $task_definition.$property_name
-            Get-Member -InputObject $values -MemberType Property | % {
+            Get-Member -InputObject $values -MemberType Property | ForEach-Object {
                 if ($_.Name -notin $ignored_properties) {
                     $result.$property.$($_.Name) = (Get-PropertyValue -task_property $property -com $values -property $_.Name)
                 }
@@ -302,14 +312,14 @@ if ($name -ne $null) {
                 $item = $collection.Item($i)
                 $item_info = @{}
 
-                Get-Member -InputObject $item -MemberType Property | % {
+                Get-Member -InputObject $item -MemberType Property | ForEach-Object {
                     if ($_.Name -notin $ignored_properties) {
                         $item_info.$($_.Name) = (Get-PropertyValue -task_property $property -com $item -property $_.Name)
                     }
                 }
                 $result.$property += $item_info
             }
-        }    
+        }
     } else {
         $result.task_exists = $false
     }
@@ -318,4 +328,3 @@ if ($name -ne $null) {
 $result = Convert-DictToSnakeCase -dict $result
 
 Exit-Json -obj $result
-

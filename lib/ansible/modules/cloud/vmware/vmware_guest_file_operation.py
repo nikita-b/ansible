@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-# Copyright: (c) 2017, Stéphane Travassac <stravassac () gmail.com>
+# Copyright: (c) 2017, Stéphane Travassac <stravassac@gmail.com>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
@@ -34,10 +34,12 @@ options:
         description:
             - The datacenter hosting the virtual machine.
             - If set, it will help to speed up virtual machine search.
+        type: str
     cluster:
         description:
             - The cluster hosting the virtual machine.
             - If set, it will help to speed up virtual machine search.
+        type: str
     folder:
         description:
             - Destination folder, absolute path to find an existing guest or create the new guest.
@@ -55,35 +57,47 @@ options:
             - '   folder: /folder1/datacenter1/vm/folder2'
             - '   folder: vm/folder2'
             - '   folder: folder2'
+        type: str
     vm_id:
         description:
             - Name of the virtual machine to work with.
         required: True
+        type: str
     vm_id_type:
         description:
             - The VMware identification method by which the virtual machine will be identified.
         default: vm_name
         choices:
             - 'uuid'
+            - 'instance_uuid'
             - 'dns_name'
             - 'inventory_path'
             - 'vm_name'
+        type: str
     vm_username:
         description:
             - The user to login in to the virtual machine.
         required: True
+        type: str
     vm_password:
         description:
             - The password used to login-in to the virtual machine.
         required: True
+        type: str
     directory:
         description:
-            - Create or delete directory.
+            - Create or delete a directory.
+            - Can be used to create temp directory inside guest using mktemp operation.
+            - mktemp sets variable C(dir) in the result with the name of the new directory.
+            - mktemp operation option is added in version 2.8
             - 'Valid attributes are:'
-            - '  path: directory path to create or remove'
-            - '  operation: Valid values are create, delete'
+            - '  operation (str): Valid values are: create, delete, mktemp'
+            - '  path (str): directory path (required for create or remove)'
+            - '  prefix (str): temporary directory prefix (required for mktemp)'
+            - '  suffix (str): temporary directory suffix (required for mktemp)'
             - '  recurse (boolean): Not required, default (false)'
         required: False
+        type: dict
     copy:
         description:
             - Copy file to vm without requiring network.
@@ -92,6 +106,7 @@ options:
             - '  dest: file destination, path must be exist'
             - '  overwrite: False or True (not required, default False)'
         required: False
+        type: dict
     fetch:
         description:
             - Get file from virtual machine without requiring network.
@@ -99,6 +114,7 @@ options:
             - '  src: The file on the remote system to fetch. This I(must) be a file, not a directory'
             - '  dest: file destination on localhost, path must be exist'
         required: False
+        type: dict
         version_added: 2.5
 
 extends_documentation_fragment: vmware.documentation
@@ -107,14 +123,14 @@ extends_documentation_fragment: vmware.documentation
 EXAMPLES = '''
 - name: Create directory inside a vm
   vmware_guest_file_operation:
-    hostname: myVSphere
-    username: myUsername
-    password: mySecret
-    datacenter: myDatacenter
-    validate_certs: True
-    vm_id: NameOfVM
-    vm_username: root
-    vm_password: superSecret
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ datacenter_name }}"
+    validate_certs: no
+    vm_id: "{{ guest_name }}"
+    vm_username: "{{ guest_username }}"
+    vm_password: "{{ guest_userpassword }}"
     directory:
       path: "/test"
       operation: create
@@ -123,14 +139,13 @@ EXAMPLES = '''
 
 - name: copy file to vm
   vmware_guest_file_operation:
-    hostname: myVSphere
-    username: myUsername
-    password: mySecret
-    datacenter: myDatacenter
-    validate_certs: True
-    vm_id: NameOfVM
-    vm_username: root
-    vm_password: superSecret
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ datacenter_name }}"
+    vm_id: "{{ guest_name }}"
+    vm_username: "{{ guest_username }}"
+    vm_password: "{{ guest_userpassword }}"
     copy:
         src: "files/test.zip"
         dest: "/root/test.zip"
@@ -139,14 +154,13 @@ EXAMPLES = '''
 
 - name: fetch file from vm
   vmware_guest_file_operation:
-    hostname: myVSphere
-    username: myUsername
-    password: mySecret
-    datacenter: myDatacenter
-    validate_certs: True
-    vm_id: NameOfVM
-    vm_username: root
-    vm_password: superSecret
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    datacenter: "{{ datacenter_name }}"
+    vm_id: "{{ guest_name }}"
+    vm_username: "{{ guest_username }}"
+    vm_password: "{{ guest_userpassword }}"
     fetch:
         src: "/root/test.zip"
         dest: "files/test.zip"
@@ -191,8 +205,11 @@ class VmwareGuestFileManager(PyVmomi):
         if module.params['vm_id_type'] == 'inventory_path':
             vm = find_vm_by_id(self.content, vm_id=module.params['vm_id'], vm_id_type="inventory_path", folder=folder)
         else:
-            vm = find_vm_by_id(self.content, vm_id=module.params['vm_id'], vm_id_type=module.params['vm_id_type'],
-                               datacenter=datacenter, cluster=cluster)
+            vm = find_vm_by_id(self.content,
+                               vm_id=module.params['vm_id'],
+                               vm_id_type=module.params['vm_id_type'],
+                               datacenter=datacenter,
+                               cluster=cluster)
 
         if not vm:
             module.fail_json(msg='Unable to find virtual machine.')
@@ -220,16 +237,23 @@ class VmwareGuestFileManager(PyVmomi):
         vm_password = self.module.params['vm_password']
 
         recurse = bool(self.module.params['directory']['recurse'])
-        operation = self.module.params["directory"]['operation']
-        path = self.module.params["directory"]['path']
+        operation = self.module.params['directory']['operation']
+        path = self.module.params['directory']['path']
+        prefix = self.module.params['directory']['prefix']
+        suffix = self.module.params['directory']['suffix']
         creds = vim.vm.guest.NamePasswordAuthentication(username=vm_username, password=vm_password)
         file_manager = self.content.guestOperationsManager.fileManager
-        if operation == "create":
+        if operation in ("create", "mktemp"):
             try:
-                file_manager.MakeDirectoryInGuest(vm=self.vm,
-                                                  auth=creds,
-                                                  directoryPath=path,
-                                                  createParentDirectories=recurse)
+                if operation == "create":
+                    file_manager.MakeDirectoryInGuest(vm=self.vm,
+                                                      auth=creds,
+                                                      directoryPath=path,
+                                                      createParentDirectories=recurse)
+                else:
+                    newdir = file_manager.CreateTemporaryDirectoryInGuest(vm=self.vm, auth=creds,
+                                                                          prefix=prefix, suffix=suffix)
+                    result['dir'] = newdir
             except vim.fault.FileAlreadyExists as file_already_exists:
                 result['changed'] = False
                 result['msg'] = "Guest directory %s already exist: %s" % (path,
@@ -277,6 +301,7 @@ class VmwareGuestFileManager(PyVmomi):
         result = dict(changed=True, uuid=self.vm.summary.config.uuid)
         vm_username = self.module.params['vm_username']
         vm_password = self.module.params['vm_password']
+        hostname = self.module.params['hostname']
         dest = self.module.params["fetch"]['dest']
         src = self.module.params['fetch']['src']
         creds = vim.vm.guest.NamePasswordAuthentication(username=vm_username, password=vm_password)
@@ -286,6 +311,7 @@ class VmwareGuestFileManager(PyVmomi):
             fileTransferInfo = file_manager.InitiateFileTransferFromGuest(vm=self.vm, auth=creds,
                                                                           guestFilePath=src)
             url = fileTransferInfo.url
+            url = url.replace("*", hostname)
             resp, info = urls.fetch_url(self.module, url, method="GET")
             try:
                 with open(dest, "wb") as local_file:
@@ -316,6 +342,7 @@ class VmwareGuestFileManager(PyVmomi):
         result = dict(changed=True, uuid=self.vm.summary.config.uuid)
         vm_username = self.module.params['vm_username']
         vm_password = self.module.params['vm_password']
+        hostname = self.module.params['hostname']
         overwrite = self.module.params["copy"]["overwrite"]
         dest = self.module.params["copy"]['dest']
         src = self.module.params['copy']['src']
@@ -329,7 +356,7 @@ class VmwareGuestFileManager(PyVmomi):
             self.module.fail_json(msg="copy does not support copy of directory: %s" % src)
 
         data = None
-        with open(b_src, "r") as local_file:
+        with open(b_src, "rb") as local_file:
             data = local_file.read()
         file_size = os.path.getsize(b_src)
 
@@ -340,11 +367,12 @@ class VmwareGuestFileManager(PyVmomi):
             url = file_manager.InitiateFileTransferToGuest(vm=self.vm, auth=creds, guestFilePath=dest,
                                                            fileAttributes=file_attributes, overwrite=overwrite,
                                                            fileSize=file_size)
+            url = url.replace("*", hostname)
             resp, info = urls.fetch_url(self.module, url, data=data, method="PUT")
 
             status_code = info["status"]
             if status_code != 200:
-                self.module.fail_json(msg='initiateFileTransferToGuest : problem during file transfer',
+                self.module.fail_json(msg='problem during file transfer, http message:%s' % info,
                                       uuid=self.vm.summary.config.uuid)
         except vim.fault.FileAlreadyExists:
             result['changed'] = False
@@ -377,15 +405,17 @@ def main():
         vm_id_type=dict(
             default='vm_name',
             type='str',
-            choices=['inventory_path', 'uuid', 'dns_name', 'vm_name']),
+            choices=['inventory_path', 'uuid', 'instance_uuid', 'dns_name', 'vm_name']),
         vm_username=dict(type='str', required=True),
         vm_password=dict(type='str', no_log=True, required=True),
         directory=dict(
             type='dict',
             default=None,
             options=dict(
-                path=dict(required=True, type='str'),
-                operation=dict(required=True, type='str', choices=['create', 'delete']),
+                operation=dict(required=True, type='str', choices=['create', 'delete', 'mktemp']),
+                path=dict(required=False, type='str'),
+                prefix=dict(required=False, type='str'),
+                suffix=dict(required=False, type='str'),
                 recurse=dict(required=False, type='bool', default=False)
             )
         ),
@@ -413,6 +443,12 @@ def main():
                            mutually_exclusive=[['directory', 'copy', 'fetch']],
                            required_one_of=[['directory', 'copy', 'fetch']],
                            )
+
+    if module.params['directory']:
+        if module.params['directory']['operation'] in ('create', 'delete') and not module.params['directory']['path']:
+            module.fail_json(msg='directory.path is required when operation is "create" or "delete"')
+        if module.params['directory']['operation'] == 'mktemp' and not (module.params['directory']['prefix'] and module.params['directory']['suffix']):
+            module.fail_json(msg='directory.prefix and directory.suffix are required when operation is "mktemp"')
 
     if module.params['vm_id_type'] == 'inventory_path' and not module.params['folder']:
         module.fail_json(msg='Folder is required parameter when vm_id_type is inventory_path')

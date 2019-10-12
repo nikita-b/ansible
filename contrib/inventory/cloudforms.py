@@ -22,7 +22,7 @@
 
 from __future__ import print_function
 import argparse
-import ConfigParser
+from ansible.module_utils.six.moves import configparser as ConfigParser
 import os
 import re
 from time import time
@@ -31,10 +31,7 @@ from requests.auth import HTTPBasicAuth
 import warnings
 from ansible.errors import AnsibleError
 
-try:
-    import json
-except ImportError:
-    import simplejson as json
+import json
 
 
 class CloudFormsInventory(object):
@@ -481,5 +478,6 @@ class CloudFormsInventory(object):
             return json.dumps(data, sort_keys=True, indent=2)
         else:
             return json.dumps(data)
+
 
 CloudFormsInventory()

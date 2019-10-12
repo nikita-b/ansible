@@ -1,21 +1,8 @@
 #!powershell
-# This file is part of Ansible
-#
-# Ansible is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# Ansible is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
-# WANT_JSON
-# POWERSHELL_COMMON
+# GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
+
+#Requires -Module Ansible.ModuleUtils.Legacy
 
 # FUTURE: check statically-set values via registry so we can determine difference between DHCP-source values and static values? (prevent spurious changed
 # notifications on DHCP-sourced values)
@@ -36,6 +23,9 @@ Function Write-DebugLog {
     $msg = "$date_str $msg"
 
     Write-Debug $msg
+
+    $log_path = $null
+    $log_path = Get-AnsibleParam -obj $params -name "log_path"
 
     if($log_path) {
         Add-Content $log_path $msg
@@ -60,7 +50,7 @@ Function Get-NetAdapterLegacy {
         @{Name="ifIndex"; Expression={$_.DeviceID}}
     )
 
-    $res = Get-WmiObject @wmiargs | Select-Object -Property $wmiprop
+    $res = Get-CIMInstance @wmiargs | Select-Object -Property $wmiprop
 
     If(@($res).Count -eq 0 -and -not $Name.Contains("*")) {
         throw "Get-NetAdapterLegacy: No Win32_NetworkAdapter objects found with property 'NetConnectionID' equal to '$Name'"
@@ -79,7 +69,7 @@ Function Get-DnsClientServerAddressLegacy {
 
     $idx = Get-NetAdapter -Name $InterfaceAlias | Select-Object -ExpandProperty ifIndex
 
-    $adapter_config = Get-WmiObject Win32_NetworkAdapterConfiguration -Filter "Index=$idx"
+    $adapter_config = Get-CIMInstance Win32_NetworkAdapterConfiguration -Filter "Index=$idx"
 
     return @(
         # IPv4 values
@@ -103,14 +93,15 @@ Function Set-DnsClientServerAddressLegacy {
 
     $idx = Get-NetAdapter -Name $InterfaceAlias | Select-Object -ExpandProperty ifIndex
 
-    $adapter_config = Get-WmiObject Win32_NetworkAdapterConfiguration -Filter "Index=$idx"
+    $adapter_config = Get-CIMInstance Win32_NetworkAdapterConfiguration -Filter "Index=$idx"
 
     If($ResetServerAddresses) {
-        $res = $adapter_config.SetDNSServerSearchOrder()
+        $arguments = @{}
     }
     Else {
-        $res = $adapter_config.SetDNSServerSearchOrder($ServerAddresses)
+        $arguments = @{ DNSServerSearchOrder = $ServerAddresses }
     }
+    $res = Invoke-CimMethod -InputObject $adapter_config -MethodName SetDNSServerSearchOrder -Arguments $arguments
 
     If($res.ReturnValue -ne 0) {
         throw "Set-DnsClientServerAddressLegacy: Error calling SetDNSServerSearchOrder, code $($res.ReturnValue))"
@@ -135,11 +126,11 @@ Function Get-DnsClientMatch {
 
     $current_dns_v4 = ($current_dns_all | Where-Object AddressFamily -eq 2 <# IPv4 #>).ServerAddresses
 
-    If (($current_dns_v4 -eq $null) -and ($ipv4_addresses -eq $null)) {
+    If (($null -eq $current_dns_v4) -and ($null -eq $ipv4_addresses)) {
         $v4_match = $True
     }
 
-    ElseIf (($current_dns_v4 -eq $null) -or ($ipv4_addresses -eq $null)) {
+    ElseIf (($null -eq $current_dns_v4) -or ($null -eq $ipv4_addresses)) {
         $v4_match = $False
     }
 
@@ -170,8 +161,8 @@ Function Set-DnsClientAddresses
     )
 
     Write-DebugLog ("Setting DNS addresses for adapter {0} to ({1})" -f $adapter_name, ($ipv4_addresses -join ", "))
-    
-    If ($ipv4_addresses -eq $null) {
+
+    If ($null -eq $ipv4_addresses) {
         Set-DnsClientServerAddress -InterfaceAlias $adapter_name -ResetServerAddress
     }
 
@@ -179,7 +170,7 @@ Function Set-DnsClientAddresses
     # this silently ignores invalid IPs, so we validate parseability ourselves up front...
         Set-DnsClientServerAddress -InterfaceAlias $adapter_name -ServerAddresses $ipv4_addresses
     }
-    
+
     # TODO: implement IPv6
 }
 
@@ -192,14 +183,13 @@ $ipv4_addresses = Get-AnsibleParam $params "ipv4_addresses" -FailIfEmpty $result
 
 If($ipv4_addresses -is [string]) {
     If($ipv4_addresses.Length -gt 0) {
-        $ipv4_address = @($ipv4_addresses)
+        $ipv4_addresses = @($ipv4_addresses)
     }
     Else {
         $ipv4_addresses = @()
     }
 }
 
-$global:log_path = Get-AnsibleParam $params "log_path"
 $check_mode = Get-AnsibleParam $params "_ansible_check_mode" -Default $false
 
 Try {
@@ -219,7 +209,7 @@ Try {
 
     Write-DebugLog ("Validating IP addresses ({0})" -f ($ipv4_addresses -join ", "))
 
-    $invalid_addresses = @($ipv4_addresses | ? { -not (Validate-IPAddress $_) })
+    $invalid_addresses = @($ipv4_addresses | Where-Object  { -not (Validate-IPAddress $_) })
 
     If($invalid_addresses.Count -gt 0) {
         throw "Invalid IP address(es): ({0})" -f ($invalid_addresses -join ", ")
@@ -248,4 +238,3 @@ Catch {
 
     Throw
 }
-

@@ -37,31 +37,34 @@ options:
         description:
             - The local user name to be changed.
         required: True
+        type: str
     local_user_password:
         description:
             - The password to be set.
         required: False
+        type: str
     local_user_description:
         description:
             - Description for the user.
         required: False
+        type: str
     state:
         description:
             - Indicate desired state of the user. If the user already exists when C(state=present), the user info is updated
         choices: ['present', 'absent']
         default: present
+        type: str
 extends_documentation_fragment: vmware.documentation
 '''
 
 EXAMPLES = '''
-# Example vmware_local_user_manager command from Ansible Playbooks
 - name: Add local user to ESXi
-  local_action:
-      module: vmware_local_user_manager
-      hostname: esxi_hostname
-      username: root
-      password: vmware
-      local_user_name: foo
+  vmware_local_user_manager:
+    hostname: esxi_hostname
+    username: root
+    password: vmware
+    local_user_name: foo
+  delegate_to: localhost
 '''
 
 RETURN = '''# '''

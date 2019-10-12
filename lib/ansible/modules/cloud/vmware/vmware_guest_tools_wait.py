@@ -31,12 +31,14 @@ options:
    name:
      description:
      - Name of the VM for which to wait until the tools become available.
-     - This is required if uuid is not supplied.
+     - This is required if C(uuid) or C(moid) is not supplied.
+     type: str
    name_match:
      description:
      - If multiple VMs match the name, use the first or last found.
      default: 'first'
      choices: ['first', 'last']
+     type: str
    folder:
      description:
      - Destination folder, absolute or relative path to find an existing guest.
@@ -52,32 +54,69 @@ options:
      - '   folder: /folder1/datacenter1/vm'
      - '   folder: folder1/datacenter1/vm'
      - '   folder: /folder1/datacenter1/vm/folder2'
+     type: str
    uuid:
      description:
      - UUID of the VM  for which to wait until the tools become available, if known. This is VMware's unique identifier.
-     - This is required, if C(name) is not supplied.
+     - This is required, if C(name) or C(moid) is not supplied.
+     type: str
+   moid:
+     description:
+     - Managed Object ID of the instance to manage if known, this is a unique identifier only within a single vCenter instance.
+     - This is required if C(name) or C(uuid) is not supplied.
+     version_added: '2.9'
+     type: str
+   use_instance_uuid:
+     description:
+     - Whether to use the VMware instance UUID rather than the BIOS UUID.
+     default: no
+     type: bool
+     version_added: '2.8'
 extends_documentation_fragment: vmware.documentation
 '''
 
 EXAMPLES = '''
 - name: Wait for VMware tools to become available by UUID
-  vmware_guest_tools_wait:
-    hostname: 192.168.1.209
-    username: administrator@vsphere.local
-    password: vmware
+  vmware_guest_facts:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
     validate_certs: no
-    uuid: 421e4592-c069-924d-ce20-7e7533fab926
+    datacenter: "{{ datacenter }}"
+    folder: "/{{datacenter}}/vm"
+    name: "{{ vm_name }}"
+  delegate_to: localhost
+  register: vm_facts
+
+- name: Get UUID from previous task and pass it to this task
+  vmware_guest_tools_wait:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: no
+    uuid: "{{ vm_facts.instance.hw_product_uuid }}"
+  delegate_to: localhost
+  register: facts
+
+
+- name: Wait for VMware tools to become available by MoID
+  vmware_guest_tools_wait:
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    validate_certs: no
+    moid: vm-42
   delegate_to: localhost
   register: facts
 
 - name: Wait for VMware tools to become available by name
   vmware_guest_tools_wait:
-    hostname: 192.168.1.209
-    username: administrator@vsphere.local
-    password: vmware
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
     validate_certs: no
     name: test-vm
-    folder: /datacenter1/vm
+    folder: "/{{datacenter}}/vm"
   delegate_to: localhost
   register: facts
 '''
@@ -95,13 +134,6 @@ import time
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils._text import to_native
 from ansible.module_utils.vmware import PyVmomi, gather_vm_facts, vmware_argument_spec
-
-
-try:
-    import pyVmomi
-    from pyVmomi import vim
-except ImportError:
-    pass
 
 
 class PyVmomiHelper(PyVmomi):
@@ -140,10 +172,15 @@ def main():
         name_match=dict(type='str', default='first', choices=['first', 'last']),
         folder=dict(type='str'),
         uuid=dict(type='str'),
+        moid=dict(type='str'),
+        use_instance_uuid=dict(type='bool', default=False),
     )
     module = AnsibleModule(
         argument_spec=argument_spec,
-        required_one_of=[['name', 'uuid']])
+        required_one_of=[
+            ['name', 'uuid', 'moid']
+        ]
+    )
 
     if module.params['folder']:
         # FindByInventoryPath() does not require an absolute path
@@ -155,9 +192,8 @@ def main():
     vm = pyv.get_vm()
 
     if not vm:
-        module.fail_json(msg="Unable to wait for VMware tools for "
-                             "non-existing VM '%s'." % (module.params.get('name') or
-                                                        module.params.get('uuid')))
+        vm_id = module.params.get('name') or module.params.get('uuid') or module.params.get('moid')
+        module.fail_json(msg="Unable to wait for VMware tools for non-existing VM '%s'." % vm_id)
 
     result = dict(changed=False)
     try:

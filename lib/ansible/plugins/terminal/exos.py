@@ -28,7 +28,7 @@ from ansible.plugins.terminal import TerminalBase
 class TerminalModule(TerminalBase):
 
     terminal_stdout_re = [
-        re.compile(br"[\r\n][\w\+\-\.:\/\[\]]+(?:\([^\)]+\)){0,3} (?:[>#]) ?$")
+        re.compile(br"[\r\n](?:! )?(?:\* )?(?:\(.*\) )?(?:Slot-\d+ )?(?:VPEX )?\S+\.\d+ (?:[>#]) ?$")
     ]
 
     terminal_stderr_re = [
@@ -43,12 +43,17 @@ class TerminalModule(TerminalBase):
         re.compile(br"Bad mask", re.I),
         re.compile(br"% ?(\S+) ?overlaps with ?(\S+)", re.I),
         re.compile(br"[%\S] ?Error: ?[\s]+", re.I),
-        re.compile(br"[%\S] ?Informational: ?[\s]+", re.I)
+        re.compile(br"[%\S] ?Informational: ?[\s]+", re.I),
+        re.compile(br"%% Invalid .* at '\^' marker.", re.I),
     ]
 
     def on_open_shell(self):
         try:
-            for cmd in (b'disable clipaging', b'configure cli columns 256'):
-                self._exec_cli_command(cmd)
+            self._exec_cli_command(b'disable clipaging')
         except AnsibleConnectionFailure:
             raise AnsibleConnectionFailure('unable to set terminal parameters')
+
+        try:
+            self._exec_cli_command(b'configure cli columns 256')
+        except AnsibleConnectionFailure:
+            self._connection.queue_message('warning', 'Unable to configure cli columns, command responses may be truncated')

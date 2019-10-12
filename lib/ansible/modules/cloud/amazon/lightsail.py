@@ -82,7 +82,7 @@ EXAMPLES = '''
     msg: "Name is {{ my_instance.instance.name }}"
 
 - debug:
-    msg: "IP is {{ my_instance.instance.publicIpAddress }}"
+    msg: "IP is {{ my_instance.instance.public_ip_address }}"
 
 # Delete an instance if present
 - lightsail:
@@ -443,7 +443,7 @@ def main():
         key_pair_name=dict(type='str'),
         user_data=dict(type='str'),
         wait=dict(type='bool', default=True),
-        wait_timeout=dict(default=300),
+        wait_timeout=dict(default=300, type='int'),
     ))
 
     module = AnsibleModule(argument_spec=argument_spec)

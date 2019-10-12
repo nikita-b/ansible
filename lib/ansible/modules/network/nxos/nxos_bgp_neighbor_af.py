@@ -98,6 +98,7 @@ options:
   allowas_in:
     description:
       - Activate allowas-in property
+    type: bool
   allowas_in_max:
     description:
       - Max-occurrences value for allowas_in. Valid values are
@@ -213,7 +214,7 @@ EXAMPLES = '''
 - name: configure RR client
   nxos_bgp_neighbor_af:
     asn: 65535
-    neighbor: '3.3.3.3'
+    neighbor: '192.0.2.3'
     afi: ipv4
     safi: unicast
     route_reflector_client: true
@@ -225,14 +226,14 @@ commands:
   description: commands sent to the device
   returned: always
   type: list
-  sample: ["router bgp 65535", "neighbor 3.3.3.3",
+  sample: ["router bgp 65535", "neighbor 192.0.2.3",
            "address-family ipv4 unicast", "route-reflector-client"]
 '''
 
 import re
 
 from ansible.module_utils.network.nxos.nxos import get_config, load_config
-from ansible.module_utils.network.nxos.nxos import nxos_argument_spec, check_args
+from ansible.module_utils.network.nxos.nxos import nxos_argument_spec
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.network.common.config import CustomNetworkConfig
 
@@ -336,11 +337,6 @@ def get_custom_value(arg, config, module):
     command = PARAM_TO_COMMAND_KEYMAP.get(arg)
     splitted_config = config.splitlines()
     value = ''
-
-    command_re = re.compile(r'\s+{0}\s*'.format(command), re.M)
-    has_command = command_re.search(config)
-    command_val_re = re.compile(r'(?:{0}\s)(?P<value>.*)$'.format(command), re.M)
-    has_command_val = command_val_re.search(config)
 
     if arg.startswith('additional_paths'):
         value = 'inherit'
@@ -629,7 +625,6 @@ def main():
     )
 
     warnings = list()
-    check_args(module, warnings)
     result = dict(changed=False, warnings=warnings)
 
     state = module.params['state']
@@ -682,7 +677,8 @@ def main():
 
     if candidate:
         candidate = candidate.items_text()
-        load_config(module, candidate)
+        if not module.check_mode:
+            load_config(module, candidate)
         result['changed'] = True
         result['commands'] = candidate
     else:

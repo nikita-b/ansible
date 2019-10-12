@@ -1,9 +1,7 @@
 #!powershell
-# This file is part of Ansible
 
+# Copyright: (c) 2017, Erwan Quelin (@equelin) <erwan.quelin@gmail.com>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-
-# Author: Erwan Quelin (mail:erwan.quelin@gmail.com - GitHub: @equelin - Twitter: @erwanquelin)
 
 #Requires -Module Ansible.ModuleUtils.Legacy
 
@@ -15,8 +13,10 @@ $diff_mode = Get-AnsibleParam -obj $params -name "_ansible_diff" -type "bool" -d
 
 # Modules parameters
 
-$path = Get-AnsibleParam -obj $params -name "path" -type "string" -failifempty $true
-$minimum_version = Get-AnsibleParam -obj $params -name "minimum_version" -type "string" -failifempty $false
+$path = Get-AnsibleParam -obj $params -name "path" -type "str" -failifempty $true
+$tags = Get-AnsibleParam -obj $params -name "tags" -type "list"
+$test_parameters = Get-AnsibleParam -obj $params -name "test_parameters" -type "dict"
+$minimum_version = Get-AnsibleParam -obj $params -name "minimum_version" -type "str" -failifempty $false
 
 $result = @{
     changed = $false
@@ -74,13 +74,24 @@ If ($result.pester_version -ge "4.0.0") {
     }
 }
 
+if($tags.count){
+    $Parameters.Tag = $tags
+}
 # Run Pester tests
 If (Test-Path -LiteralPath $path -PathType Leaf) {
+    $test_parameters_check_mode_msg = ''
+    if ($test_parameters.keys.count) {
+        $Parameters.Script = @{Path = $Path ; Parameters = $test_parameters }
+        $test_parameters_check_mode_msg = " with $($test_parameters.keys -join ',') parameters"
+    }
+    else {
+        $Parameters.Script = $Path
+    }
     if ($check_mode) {
-        $result.output = "Run pester test in the file: $path"
+        $result.output = "Run pester test in the file: $path$test_parameters_check_mode_msg"
     } else {
         try {
-            $result.output = Invoke-Pester $path @Parameters
+            $result.output = Invoke-Pester @Parameters
         } catch {
             Fail-Json -obj $result -message $_.Exception
         }

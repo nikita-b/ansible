@@ -59,7 +59,7 @@ options:
     version_added: "2.0"
   security_group_ids:
     description:
-      - A list of vpc security group names to associate with this cache cluster. Only use if inside a vpc
+      - A list of vpc security group IDs to associate with this cache cluster. Only use if inside a vpc
     version_added: "1.6"
   cache_security_groups:
     description:
@@ -369,7 +369,7 @@ class ElastiCacheManager(object):
             'EngineVersion': self.cache_engine_version
         }
         for key, value in modifiable_data.items():
-            if value is not None and self.data[key] != value:
+            if value is not None and value and self.data[key] != value:
                 return True
 
         # Check cache security groups
@@ -534,6 +534,7 @@ def main():
                         elasticache=elasticache_manager.get_info())
 
     module.exit_json(**facts_result)
+
 
 if __name__ == '__main__':
     main()

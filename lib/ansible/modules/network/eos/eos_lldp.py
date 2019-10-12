@@ -53,7 +53,7 @@ commands:
     - lldp run
 """
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.network.eos.eos import get_config, load_config, run_commands
+from ansible.module_utils.network.eos.eos import get_config, load_config
 from ansible.module_utils.network.eos.eos import eos_argument_spec
 
 
@@ -108,6 +108,7 @@ def main():
         result['changed'] = True
 
     module.exit_json(**result)
+
 
 if __name__ == '__main__':
     main()

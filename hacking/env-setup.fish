@@ -5,7 +5,7 @@ set HACKING_DIR (dirname (status -f))
 set FULL_PATH (python -c "import os; print(os.path.realpath('$HACKING_DIR'))")
 set ANSIBLE_HOME (dirname $FULL_PATH)
 set PREFIX_PYTHONPATH $ANSIBLE_HOME/lib
-set PREFIX_PATH $ANSIBLE_HOME/bin $ANSIBLE_HOME/test/runner
+set PREFIX_PATH $ANSIBLE_HOME/bin
 set PREFIX_MANPATH $ANSIBLE_HOME/docs/man
 
 # set quiet flag
@@ -65,9 +65,10 @@ set -gx ANSIBLE_LIBRARY $ANSIBLE_HOME/library
 
 # Do the work in a fuction
 function gen_egg_info
-
-    if test -e $PREFIX_PYTHONPATH/ansible*.egg-info
-        rm -rf "$PREFIX_PYTHONPATH/ansible*.egg-info"
+    # Cannot use `test` on wildcards. 
+    # @see https://github.com/fish-shell/fish-shell/issues/5960
+    if count $PREFIX_PYTHONPATH/ansible*.egg-info > /dev/null
+        rm -rf $PREFIX_PYTHONPATH/ansible*.egg-info
     end
 
     if [ $QUIET ]

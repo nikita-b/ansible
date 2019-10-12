@@ -146,7 +146,7 @@ class AffinityGroupsModule(BaseModule):
 
     def update_vms(self, affinity_group):
         """
-        This method iterate via the affinity VM assignnments and datech the VMs
+        This method iterate via the affinity VM assignments and datech the VMs
         which should not be attached to affinity and attach VMs which should be
         attached to affinity.
         """
@@ -264,9 +264,6 @@ def main():
         argument_spec=argument_spec,
         supports_check_mode=True,
     )
-
-    if module._name == 'ovirt_affinity_groups':
-        module.deprecate("The 'ovirt_affinity_groups' module is being renamed 'ovirt_affinity_group'", version=2.8)
 
     check_sdk(module)
     try:

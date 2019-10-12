@@ -23,6 +23,7 @@ version_added: '2.1'
 short_description: Add or remove YUM repositories
 description:
   - Add or remove YUM repositories in RPM-based Linux distributions.
+  - If you wish to update an existing repository definition use M(ini_file) instead.
 
 options:
   async:
@@ -68,7 +69,7 @@ options:
     default: 75
   description:
     description:
-      - A human readable string describing the repository.
+      - A human readable string describing the repository. This option corresponds to the "name" property in the repo file.
       - This parameter is only required if I(state) is set to C(present).
   enabled:
     description:
@@ -107,6 +108,8 @@ options:
     description:
       - Tells yum whether or not it should perform a GPG signature check on
         packages.
+      - No default setting. If the value is not set, the system setting from
+        C(/etc/yum.conf) or system default of C(no) will be used.
     type: bool
   gpgkey:
     description:
@@ -200,7 +203,7 @@ options:
     default: 21600
   name:
     description:
-      - Unique repository ID.
+      - Unique repository ID. This option builds the section name of the repository in the repo file.
       - This parameter is only required if I(state) is set to C(present) or
         C(absent).
     required: true
@@ -224,10 +227,10 @@ options:
         disable the global proxy setting.
   proxy_password:
     description:
-      - Username to use for proxy.
+      - Password for this proxy.
   proxy_username:
     description:
-      - Password for this proxy.
+      - Username to use for proxy.
   repo_gpgcheck:
     description:
       - This tells yum whether or not it should perform a GPG signature check
@@ -270,19 +273,23 @@ options:
     description:
       - Path to the directory containing the databases of the certificate
         authorities yum should use to verify SSL certificates.
+    aliases: [ ca_cert ]
   sslclientcert:
     description:
       - Path to the SSL client certificate yum should use to connect to
         repos/remote sites.
+    aliases: [ client_cert ]
   sslclientkey:
     description:
       - Path to the SSL client key yum should use to connect to repos/remote
         sites.
+    aliases: [ client_key ]
   sslverify:
     description:
       - Defines whether yum should verify SSL certificates/hosts at all.
     type: bool
     default: 'yes'
+    aliases: [ validate_certs ]
   state:
     description:
       - State of the repo file.
@@ -370,12 +377,12 @@ RETURN = '''
 repo:
     description: repository name
     returned: success
-    type: string
+    type: str
     sample: "epel"
 state:
     description: state of the target, after execution
     returned: success
-    type: string
+    type: str
     sample: "present"
 '''
 
@@ -590,11 +597,11 @@ def main():
         retries=dict(),
         s3_enabled=dict(type='bool'),
         skip_if_unavailable=dict(type='bool'),
-        sslcacert=dict(),
+        sslcacert=dict(aliases=['ca_cert']),
         ssl_check_cert_permissions=dict(type='bool'),
-        sslclientcert=dict(),
-        sslclientkey=dict(),
-        sslverify=dict(type='bool'),
+        sslclientcert=dict(aliases=['client_cert']),
+        sslclientkey=dict(aliases=['client_key']),
+        sslverify=dict(type='bool', aliases=['validate_certs']),
         state=dict(choices=['present', 'absent'], default='present'),
         throttle=dict(),
         timeout=dict(),
@@ -613,8 +620,7 @@ def main():
     # Params was removed
     # https://meetbot.fedoraproject.org/ansible-meeting/2017-09-28/ansible_dev_meeting.2017-09-28-15.00.log.html
     if module.params['params']:
-        module.fail_json(msg="The params option to yum_repository was removed in Ansible 2.5"
-                         "since it circumvents Ansible's option handling")
+        module.fail_json(msg="The params option to yum_repository was removed in Ansible 2.5 since it circumvents Ansible's option handling")
 
     name = module.params['name']
     state = module.params['state']

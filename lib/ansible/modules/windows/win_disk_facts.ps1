@@ -5,6 +5,7 @@
 
 #Requires -Module Ansible.ModuleUtils.Legacy
 #AnsibleRequires -OSVersion 6.2
+
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2.0
 
@@ -35,7 +36,6 @@ try {
 } catch {
     Fail-Json -obj $result -message "Failed to search the disks on the target: $($_.Exception.Message)"
 }
-[int32]$diskcount = $disks | Measure-Object | Select-Object  -ExpandProperty Count
 foreach ($disk in $disks) {
     $disk_info = @{}
     $pdisk = Get-PhysicalDisk -ErrorAction SilentlyContinue | Where-Object {

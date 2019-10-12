@@ -30,14 +30,17 @@ options:
         description:
             - Name of the datacenter to add the host.
         required: True
+        type: str
     cluster:
         description:
             - Name of the cluster to add the host.
         required: True
+        type: str
     resource_pool:
         description:
             - Resource pool name to manage.
         required: True
+        type: str
     cpu_expandable_reservations:
         description:
             - In a resource pool with an expandable reservation, the reservation on a resource pool can grow beyond the specified value.
@@ -47,11 +50,13 @@ options:
         description:
             - Amount of resource that is guaranteed available to the virtual machine or resource pool.
         default: 0
+        type: int
     cpu_limit:
         description:
             - The utilization of a virtual machine/resource pool will not exceed this limit, even if there are available resources.
             - The default value -1 indicates no limit.
         default: -1
+        type: int
     cpu_shares:
         description:
             - Memory shares are used in case of resource contention.
@@ -61,6 +66,7 @@ options:
             - low
             - normal
         default: normal
+        type: str
     mem_expandable_reservations:
         description:
             - In a resource pool with an expandable reservation, the reservation on a resource pool can grow beyond the specified value.
@@ -70,11 +76,13 @@ options:
         description:
             - Amount of resource that is guaranteed available to the virtual machine or resource pool.
         default: 0
+        type: int
     mem_limit:
         description:
             - The utilization of a virtual machine/resource pool will not exceed this limit, even if there are available resources.
             - The default value -1 indicates no limit.
         default: -1
+        type: int
     mem_shares:
         description:
             - Memory shares are used in case of resource contention.
@@ -84,6 +92,7 @@ options:
             - low
             - normal
         default: normal
+        type: str
     state:
         description:
             - Add or remove the resource pool
@@ -91,28 +100,29 @@ options:
         choices:
             - 'present'
             - 'absent'
+        type: str
 extends_documentation_fragment: vmware.documentation
 '''
 
 EXAMPLES = '''
-# Create a resource pool
-  - name: Add resource pool to vCenter
-    vmware_resource_pool:
-      hostname: vcsa_host
-      username: vcsa_user
-      password: vcsa_pass
-      datacenter: datacenter
-      cluster: cluster
-      resource_pool: resource_pool
-      mem_shares: normal
-      mem_limit: -1
-      mem_reservation: 0
-      mem_expandable_reservations: True
-      cpu_shares: normal
-      cpu_limit: -1
-      cpu_reservation: 0
-      cpu_expandable_reservations: True
-      state: present
+- name: Add resource pool to vCenter
+  vmware_resource_pool:
+    hostname: '{{ vcenter_hostname }}'
+    username: '{{ vcenter_username }}'
+    password: '{{ vcenter_password }}'
+    datacenter: '{{ datacenter_name }}'
+    cluster: '{{ cluster_name }}'
+    resource_pool: '{{ resource_pool_name }}'
+    mem_shares: normal
+    mem_limit: -1
+    mem_reservation: 0
+    mem_expandable_reservations: yes
+    cpu_shares: normal
+    cpu_limit: -1
+    cpu_reservation: 0
+    cpu_expandable_reservations: yes
+    state: present
+  delegate_to: localhost
 '''
 
 RETURN = """
@@ -229,7 +239,7 @@ class VMwareResourcePool(object):
             task = self.resource_pool_obj.Destroy()
             success, result = wait_for_task(task)
 
-        except:
+        except Exception:
             self.module.fail_json(msg="Failed to remove resource pool '%s' '%s'" % (
                 self.resource_pool, resource_pool))
         self.module.exit_json(changed=changed, result=str(result))

@@ -119,47 +119,173 @@
     that:
         - '"FC: no differences encountered" in diff_result.stdout'
 
-# VERIFY MODE
-# can't set file mode on windows so commenting this test out
-#- name: set file mode
-#  win_file: path={{win_output_dir}}/foo.templated mode=0644
-#  register: file_result
+# TEST BACKUP
+- name: test backup (check_mode)
+  win_template:
+    src: foo.j2
+    dest: '{{ win_output_dir }}/foo.unix.templated'
+    backup: yes
+  register: cm_backup_result
+  check_mode: yes
 
-#- name: ensure file mode did not change
-#  assert:
-#    that:
-#      - "file_result.changed != True"
+- name: verify that a backup_file was returned
+  assert:
+    that:
+      - cm_backup_result is changed
+      - cm_backup_result.backup_file is not none
 
-# commenting out all the following tests as expanduser and file modes not windows concepts.
+- name: test backup (normal mode)
+  win_template:
+    src: foo.j2
+    dest: '{{ win_output_dir }}/foo.unix.templated'
+    backup: yes
+  register: nm_backup_result
 
-# VERIFY dest as a directory does not break file attributes
-# Note: expanduser is needed to go down the particular codepath that was broken before
-#- name: setup directory for test
-#  win_file: state=directory dest={{win_output_dir | expanduser}}/template-dir mode=0755 owner=nobody group=root
+- name: check backup_file
+  win_stat:
+    path: '{{ nm_backup_result.backup_file }}'
+  register: backup_file
 
-#- name: set file mode when the destination is a directory
-#  win_template: src=foo.j2 dest={{win_output_dir | expanduser}}/template-dir/ mode=0600 owner=root group=root
+- name: verify that a backup_file was returned
+  assert:
+    that:
+    - nm_backup_result is changed
+    - backup_file.stat.exists == true
 
-#- name: set file mode when the destination is a directory
-#  win_template: src=foo.j2 dest={{win_output_dir | expanduser}}/template-dir/ mode=0600 owner=root group=root
-#  register: file_result
-#
-#- name: check that the file has the correct attributes
-#  win_stat: path={{win_output_dir | expanduser}}/template-dir/foo.j2
-#  register: file_attrs
-#
-#- assert:
-#    that:
-#      - "file_attrs.stat.uid == 0"
-#      - "file_attrs.stat.pw_name == 'root'"
-#      - "file_attrs.stat.mode == '0600'"
-#
-#- name: check that the containing directory did not change attributes
-#  win_stat: path={{win_output_dir | expanduser}}/template-dir/
-#  register: dir_attrs
-#
-#- assert:
-#    that:
-#      - "dir_attrs.stat.uid != 0"
-#      - "dir_attrs.stat.pw_name == 'nobody'"
-#      - "dir_attrs.stat.mode == '0755'"
+- name: create template dest directory
+  win_file:
+    path: '{{win_output_dir}}\directory'
+    state: directory
+
+- name: template src file to directory with backslash (check mode)
+  win_template:
+    src: foo.j2
+    dest: '{{win_output_dir}}\directory\'
+  check_mode: yes
+  register: template_to_dir_backslash_check
+
+- name: get result of template src file to directory with backslash (check_mode)
+  win_stat:
+    path: '{{win_output_dir}}\directory\foo.j2'
+  register: template_to_dir_backslash_result_check
+
+- name: assert template src file to directory with backslash (check mode)
+  assert:
+    that:
+    - template_to_dir_backslash_check is changed
+    - not template_to_dir_backslash_result_check.stat.exists
+
+- name: template src file to directory with backslash
+  win_template:
+    src: foo.j2
+    dest: '{{win_output_dir}}\directory\'
+  register: template_to_dir_backslash
+
+- name: get result of template src file to directory with backslash
+  win_stat:
+    path: '{{win_output_dir}}\directory\foo.j2'
+  register: template_to_dir_backslash_result
+
+- name: assert template src file to directory with backslash
+  assert:
+    that:
+    - template_to_dir_backslash is changed
+    - template_to_dir_backslash_result.stat.exists
+    - template_to_dir_backslash_result.stat.checksum == 'ed4f166b2937875ecad39c06648551f5af0b56d3'
+
+- name: template src file to directory with backslash (idempotent)
+  win_template:
+    src: foo.j2
+    dest: '{{win_output_dir}}\directory\'
+  register: template_to_dir_backslash_again
+
+- name: assert template src file to directory with backslash (idempotent)
+  assert:
+    that:
+    - not template_to_dir_backslash_again is changed
+
+- name: template src file to directory (check mode)
+  win_template:
+    src: another_foo.j2
+    dest: '{{win_output_dir}}\directory'
+  check_mode: yes
+  register: template_to_dir_check
+
+- name: get result of template src file to directory (check_mode)
+  win_stat:
+    path: '{{win_output_dir}}\directory\another_foo.j2'
+  register: template_to_dir_result_check
+
+- name: assert template src file to directory (check mode)
+  assert:
+    that:
+    - template_to_dir_check is changed
+    - not template_to_dir_result_check.stat.exists
+
+- name: template src file to directory
+  win_template:
+    src: another_foo.j2
+    dest: '{{win_output_dir}}\directory'
+  register: template_to_dir
+
+- name: get result of template src file to directory
+  win_stat:
+    path: '{{win_output_dir}}\directory\another_foo.j2'
+  register: template_to_dir_result
+
+- name: assert template src file to directory with
+  assert:
+    that:
+    - template_to_dir is changed
+    - template_to_dir_result.stat.exists
+    - template_to_dir_result.stat.checksum == 'b10b6f27290d554a77da2457b2ccd7d6de86b920'
+
+- name: template src file to directory (idempotent)
+  win_template:
+    src: another_foo.j2
+    dest: '{{win_output_dir}}\directory'
+  register: template_to_dir_again
+
+- name: assert template src file to directory (idempotent)
+  assert:
+    that:
+    - not template_to_dir_again is changed
+
+- name: template a file with utf-8 encoding
+  win_template:
+    src: foo.utf-8.j2
+    dest: '{{ win_output_dir }}\foo.encoding.txt'
+  register: template_utf8
+
+- name: slurp utf-8 templated file
+  slurp:
+    path: '{{ win_output_dir }}\foo.encoding.txt'
+  register: template_utf8_actual
+
+- name: get expected templated contents
+  set_fact:
+    expected_content: '{{ lookup("template", "foo.utf-8.j2") | trim }}'
+
+- name: assert template a file with utf-8 encoding
+  assert:
+    that:
+    - template_utf8 is changed
+    - template_utf8_actual.content | b64decode(encoding='utf-8') == expected_content + "\r\n"
+
+- name: template a file with windows-1252 encoding
+  win_template:
+    src: foo.utf-8.j2
+    dest: '{{ win_output_dir }}\foo.encoding.txt'
+    output_encoding: windows-1252
+  register: template_windows_1252
+
+- name: slurp windows-1252 encoding
+  slurp:
+    path: '{{ win_output_dir }}\foo.encoding.txt'
+  register: template_windows_1252_actual
+
+- name: assert template a file with windows-1252 encoding
+  assert:
+    that:
+    - template_windows_1252 is changed
+    - template_windows_1252_actual.content | b64decode(encoding='windows-1252') == expected_content + "\r\n"

@@ -39,7 +39,14 @@ options:
     version:
         description:
             - The maven version coordinate
-        default: latest
+            - Mutually exclusive with I(version_by_spec).
+    version_by_spec:
+        description:
+            - The maven dependency version ranges.
+            - See supported version ranges on U(https://cwiki.apache.org/confluence/display/MAVENOLD/Dependency+Mediation+and+Conflict+Resolution)
+            - The range type "(,1.0],[1.2,)" and "(,1.1),(1.1,)" is not supported.
+            - Mutually exclusive with I(version).
+        version_added: "2.10"
     classifier:
         description:
             - The maven classifier coordinate
@@ -61,6 +68,11 @@ options:
         description:
             - The password to authenticate with to the Maven Repository. Use AWS secret access key of the repository is hosted on S3
         aliases: [ "aws_secret_access_key" ]
+    headers:
+        description:
+            - Add custom HTTP headers to a request in hash/dict format.
+        type: dict
+        version_added: "2.8"
     dest:
         description:
             - The path where the artifact should be written to
@@ -85,7 +97,8 @@ options:
     keep_name:
         description:
             - If C(yes), the downloaded artifact's name is preserved, i.e the version number remains part of it.
-            - This option only has effect when C(dest) is a directory and C(version) is set to C(latest).
+            - This option only has effect when C(dest) is a directory and C(version) is set to C(latest) or C(version_by_spec)
+              is defined.
         type: bool
         default: 'no'
         version_added: "2.4"
@@ -153,31 +166,55 @@ EXAMPLES = '''
     artifact_id: junit
     dest: /tmp/junit-latest.jar
     repository_url: "file://{{ lookup('env','HOME') }}/.m2/repository"
+
+# Download the latest version between 3.8 and 4.0 (exclusive) of the JUnit framework artifact from Maven Central
+- maven_artifact:
+    group_id: junit
+    artifact_id: junit
+    version_by_spec: "[3.8,4.0)"
+    dest: /tmp/
 '''
 
 import hashlib
 import os
 import posixpath
-import sys
 import shutil
 import io
+import tempfile
+import traceback
 
+from ansible.module_utils.ansible_release import __version__ as ansible_version
+from re import match
+
+LXML_ETREE_IMP_ERR = None
 try:
     from lxml import etree
     HAS_LXML_ETREE = True
 except ImportError:
+    LXML_ETREE_IMP_ERR = traceback.format_exc()
     HAS_LXML_ETREE = False
 
+BOTO_IMP_ERR = None
 try:
     import boto3
     HAS_BOTO = True
 except ImportError:
+    BOTO_IMP_ERR = traceback.format_exc()
     HAS_BOTO = False
 
-from ansible.module_utils.basic import AnsibleModule
+SEMANTIC_VERSION_IMP_ERR = None
+try:
+    from semantic_version import Version, Spec
+    HAS_SEMANTIC_VERSION = True
+except ImportError:
+    SEMANTIC_VERSION_IMP_ERR = traceback.format_exc()
+    HAS_SEMANTIC_VERSION = False
+
+
+from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 from ansible.module_utils.six.moves.urllib.parse import urlparse
 from ansible.module_utils.urls import fetch_url
-from ansible.module_utils._text import to_bytes
+from ansible.module_utils._text import to_bytes, to_native, to_text
 
 
 def split_pre_existing_dir(dirname):
@@ -187,7 +224,10 @@ def split_pre_existing_dir(dirname):
     head, tail = os.path.split(dirname)
     b_head = to_bytes(head, errors='surrogate_or_strict')
     if not os.path.exists(b_head):
-        (pre_existing_dir, new_directory_list) = split_pre_existing_dir(head)
+        if head == dirname:
+            return None, [head]
+        else:
+            (pre_existing_dir, new_directory_list) = split_pre_existing_dir(head)
     else:
         return head, [tail]
     new_directory_list.append(tail)
@@ -199,7 +239,11 @@ def adjust_recursive_directory_permissions(pre_existing_dir, new_directory_list,
     Walk the new directories list and make sure that permissions are as we would expect
     '''
     if new_directory_list:
-        working_dir = os.path.join(pre_existing_dir, new_directory_list.pop(0))
+        first_sub_dir = new_directory_list.pop(0)
+        if not pre_existing_dir:
+            working_dir = first_sub_dir
+        else:
+            working_dir = os.path.join(pre_existing_dir, first_sub_dir)
         directory_args['path'] = working_dir
         changed = module.set_fs_attributes_if_different(directory_args, changed)
         changed = adjust_recursive_directory_permissions(working_dir, new_directory_list, module, directory_args, changed)
@@ -207,7 +251,7 @@ def adjust_recursive_directory_permissions(pre_existing_dir, new_directory_list,
 
 
 class Artifact(object):
-    def __init__(self, group_id, artifact_id, version, classifier='', extension='jar'):
+    def __init__(self, group_id, artifact_id, version, version_by_spec, classifier='', extension='jar'):
         if not group_id:
             raise ValueError("group_id must be set")
         if not artifact_id:
@@ -216,6 +260,7 @@ class Artifact(object):
         self.group_id = group_id
         self.artifact_id = artifact_id
         self.version = version
+        self.version_by_spec = version_by_spec
         self.classifier = classifier
 
         if not extension:
@@ -273,15 +318,61 @@ class Artifact(object):
 
 
 class MavenDownloader:
-    def __init__(self, module, base="http://repo1.maven.org/maven2", local=False):
+    def __init__(self, module, base, local=False, headers=None):
         self.module = module
         if base.endswith("/"):
             base = base.rstrip("/")
         self.base = base
         self.local = local
-        self.user_agent = "Maven Artifact Downloader/1.0"
+        self.headers = headers
+        self.user_agent = "Ansible {0} maven_artifact".format(ansible_version)
         self.latest_version_found = None
         self.metadata_file_name = "maven-metadata-local.xml" if local else "maven-metadata.xml"
+
+    def find_version_by_spec(self, artifact):
+        path = "/%s/%s" % (artifact.path(False), self.metadata_file_name)
+        content = self._getContent(self.base + path, "Failed to retrieve the maven metadata file: " + path)
+        xml = etree.fromstring(content)
+        original_versions = xml.xpath("/metadata/versioning/versions/version/text()")
+        versions = []
+        for version in original_versions:
+            try:
+                versions.append(Version.coerce(version))
+            except ValueError:
+                # This means that version string is not a valid semantic versioning
+                pass
+
+        parse_versions_syntax = {
+            # example -> (,1.0]
+            r"^\(,(?P<upper_bound>[0-9.]*)]$": "<={upper_bound}",
+            # example -> 1.0
+            r"^(?P<version>[0-9.]*)$": "~={version}",
+            # example -> [1.0]
+            r"^\[(?P<version>[0-9.]*)\]$": "=={version}",
+            # example -> [1.2, 1.3]
+            r"^\[(?P<lower_bound>[0-9.]*),\s*(?P<upper_bound>[0-9.]*)\]$": ">={lower_bound},<={upper_bound}",
+            # example -> [1.2, 1.3)
+            r"^\[(?P<lower_bound>[0-9.]*),\s*(?P<upper_bound>[0-9.]+)\)$": ">={lower_bound},<{upper_bound}",
+            # example -> [1.5,)
+            r"^\[(?P<lower_bound>[0-9.]*),\)$": ">={lower_bound}",
+        }
+
+        for regex, spec_format in parse_versions_syntax.items():
+            regex_result = match(regex, artifact.version_by_spec)
+            if regex_result:
+                spec = Spec(spec_format.format(**regex_result.groupdict()))
+                selected_version = spec.select(versions)
+
+                if not selected_version:
+                    raise ValueError("No version found with this spec version: {0}".format(artifact.version_by_spec))
+
+                # To deal when repos on maven don't have patch number on first build (e.g. 3.8 instead of 3.8.0)
+                if str(selected_version) not in original_versions:
+                    selected_version.patch = None
+
+                return str(selected_version)
+
+        raise ValueError("The spec version {0} is not supported! ".format(artifact.version_by_spec))
 
     def find_latest_version_available(self, artifact):
         if self.latest_version_found:
@@ -295,6 +386,9 @@ class MavenDownloader:
             return v[0]
 
     def find_uri_for_artifact(self, artifact):
+        if artifact.version_by_spec:
+            artifact.version = self.find_version_by_spec(artifact)
+
         if artifact.version == "latest":
             artifact.version = self.find_latest_version_available(artifact)
 
@@ -304,8 +398,7 @@ class MavenDownloader:
             path = "/%s/%s" % (artifact.path(), self.metadata_file_name)
             content = self._getContent(self.base + path, "Failed to retrieve the maven metadata file: " + path)
             xml = etree.fromstring(content)
-            timestamp = xml.xpath("/metadata/versioning/snapshot/timestamp/text()")[0]
-            buildNumber = xml.xpath("/metadata/versioning/snapshot/buildNumber/text()")[0]
+
             for snapshotArtifact in xml.xpath("/metadata/versioning/snapshotVersions/snapshotVersion"):
                 classifier = snapshotArtifact.xpath("classifier/text()")
                 artifact_classifier = classifier[0] if classifier else ''
@@ -313,7 +406,11 @@ class MavenDownloader:
                 artifact_extension = extension[0] if extension else ''
                 if artifact_classifier == artifact.classifier and artifact_extension == artifact.extension:
                     return self._uri_for_artifact(artifact, snapshotArtifact.xpath("value/text()")[0])
-            return self._uri_for_artifact(artifact, artifact.version.replace("SNAPSHOT", timestamp + "-" + buildNumber))
+            timestamp_xmlpath = xml.xpath("/metadata/versioning/snapshot/timestamp/text()")
+            if timestamp_xmlpath:
+                timestamp = timestamp_xmlpath[0]
+                build_number = xml.xpath("/metadata/versioning/snapshot/buildNumber/text()")[0]
+                return self._uri_for_artifact(artifact, artifact.version.replace("SNAPSHOT", timestamp + "-" + build_number))
 
         return self._uri_for_artifact(artifact, artifact.version)
 
@@ -359,78 +456,81 @@ class MavenDownloader:
         # Hack to add parameters in the way that fetch_url expects
         self.module.params['url_username'] = self.module.params.get('username', '')
         self.module.params['url_password'] = self.module.params.get('password', '')
-        self.module.params['http_agent'] = self.module.params.get('user_agent', None)
+        self.module.params['http_agent'] = self.user_agent
 
-        response, info = fetch_url(self.module, url_to_use, timeout=req_timeout)
+        response, info = fetch_url(self.module, url_to_use, timeout=req_timeout, headers=self.headers)
         if info['status'] == 200:
             return response
         if force:
             raise ValueError(failmsg + " because of " + info['msg'] + "for URL " + url_to_use)
         return None
 
-    def download(self, artifact, verify_download, filename=None):
-        filename = artifact.get_filename(filename)
-        if not artifact.version or artifact.version == "latest":
-            artifact = Artifact(artifact.group_id, artifact.artifact_id, self.find_latest_version_available(artifact),
+    def download(self, tmpdir, artifact, verify_download, filename=None):
+        if (not artifact.version and not artifact.version_by_spec) or artifact.version == "latest":
+            artifact = Artifact(artifact.group_id, artifact.artifact_id, self.find_latest_version_available(artifact), None,
                                 artifact.classifier, artifact.extension)
         url = self.find_uri_for_artifact(artifact)
-        if self.local:
-            parsed_url = urlparse(url)
-            if os.path.isfile(parsed_url.path):
-                shutil.copy2(parsed_url.path, filename)
+        tempfd, tempname = tempfile.mkstemp(dir=tmpdir)
+
+        try:
+            # copy to temp file
+            if self.local:
+                parsed_url = urlparse(url)
+                if os.path.isfile(parsed_url.path):
+                    shutil.copy2(parsed_url.path, tempname)
+                else:
+                    return "Can not find local file: " + parsed_url.path
             else:
-                return "Can not find local file: " + parsed_url.path
-        else:
-            response = self._request(url, "Failed to download artifact " + str(artifact))
-            with io.open(filename, 'wb') as f:
-                self._write_chunks(response, f, report_hook=self.chunk_report)
-        if verify_download and not self.verify_md5(filename, url):
-            # if verify_change was set, the previous file would be deleted
-            os.remove(filename)
-            return "Checksum verification failed"
+                response = self._request(url, "Failed to download artifact " + str(artifact))
+                with os.fdopen(tempfd, 'wb') as f:
+                    shutil.copyfileobj(response, f)
+
+            if verify_download:
+                invalid_md5 = self.is_invalid_md5(tempname, url)
+                if invalid_md5:
+                    # if verify_change was set, the previous file would be deleted
+                    os.remove(tempname)
+                    return invalid_md5
+        except Exception as e:
+            os.remove(tempname)
+            raise e
+
+        # all good, now copy temp file to target
+        shutil.move(tempname, artifact.get_filename(filename))
         return None
 
-    def chunk_report(self, bytes_so_far, chunk_size, total_size):
-        percent = float(bytes_so_far) / total_size
-        percent = round(percent * 100, 2)
-        sys.stdout.write("Downloaded %d of %d bytes (%0.2f%%)\r" %
-                         (bytes_so_far, total_size, percent))
-        if bytes_so_far >= total_size:
-            sys.stdout.write('\n')
-
-    def _write_chunks(self, response, filehandle, chunk_size=8192, report_hook=None):
-        total_size = response.info().get('Content-Length').strip()
-        total_size = int(total_size)
-        bytes_so_far = 0
-
-        while True:
-            chunk = response.read(chunk_size)
-            bytes_so_far += len(chunk)
-
-            if not chunk:
-                break
-
-            filehandle.write(chunk)
-            if report_hook:
-                report_hook(bytes_so_far, chunk_size, total_size)
-
-        return bytes_so_far
-
-    def verify_md5(self, file, remote_url):
+    def is_invalid_md5(self, file, remote_url):
         if os.path.exists(file):
             local_md5 = self._local_md5(file)
             if self.local:
                 parsed_url = urlparse(remote_url)
                 remote_md5 = self._local_md5(parsed_url.path)
             else:
-                remote_md5 = self._getContent(remote_url + '.md5', "Failed to retrieve MD5", False)
-            return local_md5 == remote_md5
-        return False
+                try:
+                    remote_md5 = to_text(self._getContent(remote_url + '.md5', "Failed to retrieve MD5", False), errors='strict')
+                except UnicodeError as e:
+                    return "Cannot retrieve a valid md5 from %s: %s" % (remote_url, to_native(e))
+                if(not remote_md5):
+                    return "Cannot find md5 from " + remote_url
+            try:
+                # Check if remote md5 only contains md5 or md5 + filename
+                _remote_md5 = remote_md5.split(None)[0]
+                remote_md5 = _remote_md5
+                # remote_md5 is empty so we continue and keep original md5 string
+                # This should not happen since we check for remote_md5 before
+            except IndexError as e:
+                pass
+            if local_md5 == remote_md5:
+                return None
+            else:
+                return "Checksum does not match: we computed " + local_md5 + "but the repository states " + remote_md5
+
+        return "Path does not exist: " + file
 
     def _local_md5(self, file):
         md5 = hashlib.md5()
         with io.open(file, 'rb') as f:
-            for chunk in iter(lambda: f.read(8192), ''):
+            for chunk in iter(lambda: f.read(8192), b''):
                 md5.update(chunk)
         return md5.hexdigest()
 
@@ -438,26 +538,32 @@ class MavenDownloader:
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            group_id=dict(default=None),
-            artifact_id=dict(default=None),
-            version=dict(default="latest"),
+            group_id=dict(required=True),
+            artifact_id=dict(required=True),
+            version=dict(default=None),
+            version_by_spec=dict(default=None),
             classifier=dict(default=''),
             extension=dict(default='jar'),
-            repository_url=dict(default=None),
+            repository_url=dict(default='http://repo1.maven.org/maven2'),
             username=dict(default=None, aliases=['aws_secret_key']),
             password=dict(default=None, no_log=True, aliases=['aws_secret_access_key']),
+            headers=dict(type='dict'),
             state=dict(default="present", choices=["present", "absent"]),  # TODO - Implement a "latest" state
             timeout=dict(default=10, type='int'),
-            dest=dict(type="path", default=None),
+            dest=dict(type="path", required=True),
             validate_certs=dict(required=False, default=True, type='bool'),
             keep_name=dict(required=False, default=False, type='bool'),
             verify_checksum=dict(required=False, default='download', choices=['never', 'download', 'change', 'always'])
         ),
-        add_file_common_args=True
+        add_file_common_args=True,
+        mutually_exclusive=([('version', 'version_by_spec')])
     )
 
     if not HAS_LXML_ETREE:
-        module.fail_json(msg='module requires the lxml python library installed on the managed machine')
+        module.fail_json(msg=missing_required_lib('lxml'), exception=LXML_ETREE_IMP_ERR)
+
+    if module.params['version_by_spec'] and not HAS_SEMANTIC_VERSION:
+        module.fail_json(msg=missing_required_lib('semantic_version'), exception=SEMANTIC_VERSION_IMP_ERR)
 
     repository_url = module.params["repository_url"]
     if not repository_url:
@@ -470,13 +576,16 @@ def main():
     local = parsed_url.scheme == "file"
 
     if parsed_url.scheme == 's3' and not HAS_BOTO:
-        module.fail_json(msg='boto3 required for this module, when using s3:// repository URLs')
+        module.fail_json(msg=missing_required_lib('boto3', reason='when using s3:// repository URLs'),
+                         exception=BOTO_IMP_ERR)
 
     group_id = module.params["group_id"]
     artifact_id = module.params["artifact_id"]
     version = module.params["version"]
+    version_by_spec = module.params["version_by_spec"]
     classifier = module.params["classifier"]
     extension = module.params["extension"]
+    headers = module.params['headers']
     state = module.params["state"]
     dest = module.params["dest"]
     b_dest = to_bytes(dest, errors='surrogate_or_strict')
@@ -485,10 +594,13 @@ def main():
     verify_download = verify_checksum in ['download', 'always']
     verify_change = verify_checksum in ['change', 'always']
 
-    downloader = MavenDownloader(module, repository_url, local)
+    downloader = MavenDownloader(module, repository_url, local, headers)
+
+    if not version_by_spec and not version:
+        version = "latest"
 
     try:
-        artifact = Artifact(group_id, artifact_id, version, classifier, extension)
+        artifact = Artifact(group_id, artifact_id, version, version_by_spec, classifier, extension)
     except ValueError as e:
         module.fail_json(msg=e.args[0])
 
@@ -510,21 +622,27 @@ def main():
 
     if os.path.isdir(b_dest):
         version_part = version
-        if keep_name and version == 'latest':
+        if version == 'latest':
             version_part = downloader.find_latest_version_available(artifact)
+        elif version_by_spec:
+            version_part = downloader.find_version_by_spec(artifact)
 
-        if classifier:
-            dest = posixpath.join(dest, "%s-%s-%s.%s" % (artifact_id, version_part, classifier, extension))
-        else:
-            dest = posixpath.join(dest, "%s-%s.%s" % (artifact_id, version_part, extension))
+        filename = "{artifact_id}{version_part}{classifier}.{extension}".format(
+            artifact_id=artifact_id,
+            version_part="-{0}".format(version_part) if keep_name else "",
+            classifier="-{0}".format(classifier) if classifier else "",
+            extension=extension
+        )
+        dest = posixpath.join(dest, filename)
+
         b_dest = to_bytes(dest, errors='surrogate_or_strict')
 
-    if os.path.lexists(b_dest) and ((not verify_change) or downloader.verify_md5(dest, downloader.find_uri_for_artifact(artifact))):
+    if os.path.lexists(b_dest) and ((not verify_change) or not downloader.is_invalid_md5(dest, downloader.find_uri_for_artifact(artifact))):
         prev_state = "present"
 
     if prev_state == "absent":
         try:
-            download_error = downloader.download(artifact, verify_download, b_dest)
+            download_error = downloader.download(module.tmpdir, artifact, verify_download, b_dest)
             if download_error is None:
                 changed = True
             else:
@@ -540,6 +658,7 @@ def main():
                          extension=extension, repository_url=repository_url, changed=changed)
     else:
         module.exit_json(state=state, dest=dest, changed=changed)
+
 
 if __name__ == '__main__':
     main()

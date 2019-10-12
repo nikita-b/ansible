@@ -26,11 +26,12 @@ from units.modules.utils import AnsibleExitJson, AnsibleFailJson, ModuleTestCase
 from units.modules.utils import set_module_args as _set_module_args
 
 
-def set_module_args(args):
-    if 'provider' not in args:
+def set_module_args(args, ignore_provider=None):
+    if 'provider' not in args and not ignore_provider:
         args['provider'] = {'transport': args.get('transport') or 'cli'}
 
     return _set_module_args(args)
+
 
 fixture_path = os.path.join(os.path.dirname(__file__), 'fixtures')
 fixture_data = {}
@@ -49,7 +50,7 @@ def load_fixture(module_name, name, device=''):
 
     try:
         data = json.loads(data)
-    except:
+    except Exception:
         pass
 
     fixture_data[path] = data

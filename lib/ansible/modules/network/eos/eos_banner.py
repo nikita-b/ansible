@@ -89,7 +89,7 @@ session_name:
 """
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.network.eos.eos import load_config, run_commands
-from ansible.module_utils.network.eos.eos import eos_argument_spec, check_args
+from ansible.module_utils.network.eos.eos import eos_argument_spec
 from ansible.module_utils.six import string_types
 from ansible.module_utils._text import to_text
 
@@ -100,7 +100,7 @@ def map_obj_to_commands(updates, module):
     state = module.params['state']
 
     if state == 'absent' and have.get('text'):
-        if isinstance(have['text'], str):
+        if isinstance(have['text'], string_types):
             commands.append('no banner %s' % module.params['banner'])
         elif have['text'].get('loginBanner') or have['text'].get('motd'):
             commands.append({'cmd': 'no banner %s' % module.params['banner']})
@@ -147,7 +147,7 @@ def map_config_to_obj(module):
 def map_params_to_obj(module):
     text = module.params['text']
     if text:
-        text = str(text).strip()
+        text = to_text(text).strip()
 
     return {
         'banner': module.params['banner'],
@@ -174,7 +174,6 @@ def main():
                            supports_check_mode=True)
 
     warnings = list()
-    check_args(module, warnings)
 
     result = {'changed': False}
     if warnings:
@@ -194,6 +193,7 @@ def main():
         result['changed'] = True
 
     module.exit_json(**result)
+
 
 if __name__ == '__main__':
     main()

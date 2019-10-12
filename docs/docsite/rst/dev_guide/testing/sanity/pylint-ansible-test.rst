@@ -1,5 +1,7 @@
-Sanity Tests » pylint-ansible-test
-==================================
+:orphan:
+
+pylint-ansible-test
+===================
 
 Python static analysis for common programming errors.
 

@@ -44,12 +44,12 @@ options:
     required: false
     default: no
 requirements: [ ]
-author: Anders Ingemann
+author: Anders Ingemann (@andsens)
 '''
 
 RETURN = '''
 reasons:
-    description: the reasons why the moule changed or did not change something
+    description: the reasons why the module changed or did not change something
     returned: success
     type: list
     sample: ["channel subscription was absent and state is `present'"]
@@ -64,6 +64,8 @@ EXAMPLES = '''
 - name: unsubscribe from common checks
   sensu_subscription: name=common state=absent
 '''
+
+import json
 import traceback
 
 from ansible.module_utils.basic import AnsibleModule
@@ -75,14 +77,9 @@ def sensu_subscription(module, path, name, state='present', backup=False):
     reasons = []
 
     try:
-        import json
-    except ImportError:
-        import simplejson as json
-
-    try:
         config = json.load(open(path))
     except IOError as e:
-        if e.errno is 2:  # File not found, non-fatal
+        if e.errno == 2:  # File not found, non-fatal
             if state == 'absent':
                 reasons.append('file did not exist and state is `absent\'')
                 return changed, reasons

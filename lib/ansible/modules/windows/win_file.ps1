@@ -1,7 +1,6 @@
 #!powershell
 
 # Copyright: (c) 2017, Ansible Project
-
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 #Requires -Module Ansible.ModuleUtils.Legacy
@@ -11,9 +10,16 @@ $ErrorActionPreference = "Stop"
 $params = Parse-Args $args -supports_check_mode $true
 
 $check_mode = Get-AnsibleParam -obj $params -name "_ansible_check_mode" -default $false
+$_remote_tmp = Get-AnsibleParam $params "_ansible_remote_tmp" -type "path" -default $env:TMP
 
 $path = Get-AnsibleParam -obj $params -name "path" -type "path" -failifempty $true -aliases "dest","name"
 $state = Get-AnsibleParam -obj $params -name "state" -type "str" -validateset "absent","directory","file","touch"
+
+# used in template/copy when dest is the path to a dir and source is a file
+$original_basename = Get-AnsibleParam -obj $params -name "_original_basename" -type "str"
+if ((Test-Path -LiteralPath $path -PathType Container) -and ($null -ne $original_basename)) {
+    $path = Join-Path -Path $path -ChildPath $original_basename
+}
 
 $result = @{
     changed = $false
@@ -45,7 +51,10 @@ namespace Ansible.Command {
     }
 }
 "@
+$original_tmp = $env:TMP
+$env:TMP = $_remote_tmp
 Add-Type -TypeDefinition $symlink_util
+$env:TMP = $original_tmp
 
 # Used to delete directories and files with logic on handling symbolic links
 function Remove-File($file, $checkmode) {
@@ -73,7 +82,7 @@ function Remove-File($file, $checkmode) {
 }
 
 function Remove-Directory($directory, $checkmode) {
-    foreach ($file in Get-ChildItem $directory.FullName) {
+    foreach ($file in Get-ChildItem -LiteralPath $directory.FullName) {
         Remove-File -file $file -checkmode $checkmode
     }
     Remove-Item -LiteralPath $directory.FullName -Force -Recurse -WhatIf:$checkmode
@@ -93,7 +102,7 @@ if ($state -eq "touch") {
 }
 
 if (Test-Path -LiteralPath $path) {
-    $fileinfo = Get-Item -LiteralPath $path
+    $fileinfo = Get-Item -LiteralPath $path -Force
     if ($state -eq "absent") {
         Remove-File -file $fileinfo -checkmode $check_mode
         $result.changed = $true
@@ -111,7 +120,7 @@ if (Test-Path -LiteralPath $path) {
 
     # If state is not supplied, test the $path to see if it looks like
     # a file or a folder and set state to file or folder
-    if ($state -eq $null) {
+    if ($null -eq $state) {
         $basename = Split-Path -Path $path -Leaf
         if ($basename.length -gt 0) {
            $state = "file"

@@ -125,18 +125,6 @@ def _choose_id_value(module):
     return None
 
 
-# TODO(TheJulia): Change this over to use the machine patch method
-# in shade once it is available.
-def _prepare_instance_info_patch(instance_info):
-    patch = []
-    patch.append({
-        'op': 'replace',
-        'path': '/instance_info',
-        'value': instance_info
-    })
-    return patch
-
-
 def _is_true(value):
     true_values = [True, 'yes', 'Yes', 'True', 'true', 'present', 'on']
     if value in true_values:
@@ -229,11 +217,6 @@ def main():
     module_kwargs = openstack_module_kwargs()
     module = AnsibleModule(argument_spec, **module_kwargs)
 
-    if module.params['wait']:
-        min_version = '1.4.0'
-    else:
-        min_version = None
-
     if (module.params['auth_type'] in [None, 'None'] and
             module.params['ironic_url'] is None):
         module.fail_json(msg="Authentication appears disabled, Please "
@@ -250,8 +233,7 @@ def main():
     if not node_id:
         module.fail_json(msg="A uuid or name value must be defined "
                              "to use this module.")
-    shade, cloud = openstack_cloud_from_module(
-        module, min_version=min_version)
+    sdk, cloud = openstack_cloud_from_module(module)
     try:
         node = cloud.get_machine(node_id)
 
@@ -264,8 +246,8 @@ def main():
         wait = module.params['wait']
         timeout = module.params['timeout']
 
-        # User has reqeusted desired state to be in maintenance state.
-        if module.params['state'] is 'maintenance':
+        # User has requested desired state to be in maintenance state.
+        if module.params['state'] == 'maintenance':
             module.params['maintenance'] = True
 
         if node['provision_state'] in [
@@ -312,8 +294,7 @@ def main():
             # deployment specific. Perhaps consider adding rebuild
             # support, although there is a known desire to remove
             # rebuild support from Ironic at some point in the future.
-            patch = _prepare_instance_info_patch(instance_info)
-            cloud.set_node_instance_info(uuid, patch)
+            cloud.update_machine(uuid, instance_info=instance_info)
             cloud.validate_node(uuid)
             if not wait:
                 cloud.activate_node(uuid, module.params['config_drive'])
@@ -328,7 +309,7 @@ def main():
 
         elif _is_false(module.params['state']):
             if node['provision_state'] not in "deleted":
-                cloud.purge_node_instance_info(uuid)
+                cloud.update_machine(uuid, instance_info={})
                 if not wait:
                     cloud.deactivate_node(uuid)
                 else:
@@ -344,7 +325,7 @@ def main():
             module.fail_json(msg="State must be present, absent, "
                                  "maintenance, off")
 
-    except shade.OpenStackCloudException as e:
+    except sdk.exceptions.OpenStackCloudException as e:
         module.fail_json(msg=str(e))
 
 

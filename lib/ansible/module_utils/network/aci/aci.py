@@ -10,6 +10,7 @@
 # Copyright: (c) 2017, Dag Wieers <dag@wieers.com>
 # Copyright: (c) 2017, Jacob McGill (@jmcgill298)
 # Copyright: (c) 2017, Swetha Chunduri (@schunduri)
+# Copyright: (c) 2019, Rob Huelga (@RobW3LGA)
 # All rights reserved.
 
 # Redistribution and use in source and binary forms, with or without modification,
@@ -31,6 +32,9 @@
 # LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
 # USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
 import base64
 import json
 import os
@@ -38,7 +42,7 @@ from copy import deepcopy
 
 from ansible.module_utils.parsing.convert_bool import boolean
 from ansible.module_utils.urls import fetch_url
-from ansible.module_utils._text import to_bytes
+from ansible.module_utils._text import to_bytes, to_native
 
 # Optional, only used for APIC signature-based authentication
 try:
@@ -68,53 +72,14 @@ def aci_argument_spec():
         port=dict(type='int', required=False),
         username=dict(type='str', default='admin', aliases=['user']),
         password=dict(type='str', no_log=True),
-        private_key=dict(type='path', aliases=['cert_key']),  # Beware, this is not the same as client_key !
+        private_key=dict(type='str', aliases=['cert_key'], no_log=True),  # Beware, this is not the same as client_key !
         certificate_name=dict(type='str', aliases=['cert_name']),  # Beware, this is not the same as client_cert !
-        output_level=dict(type='str', choices=['debug', 'info', 'normal']),
+        output_level=dict(type='str', default='normal', choices=['debug', 'info', 'normal']),
         timeout=dict(type='int', default=30),
         use_proxy=dict(type='bool', default=True),
         use_ssl=dict(type='bool', default=True),
         validate_certs=dict(type='bool', default=True),
     )
-
-'''
-URL_MAPPING = dict(
-    action_rule=dict(aci_class='rtctrlAttrP', mo='attr-', key='name'),
-    aep=dict(aci_class='infraAttEntityP', mo='infra/attentp-', key='name'),
-    ap=dict(aci_class='fvAp', mo='ap-', key='name'),
-    bd=dict(aci_class='fvBD', mo='BD-', key='name'),
-    bd_l3out=dict(aci_class='fvRsBDToOut', mo='rsBDToOut-', key='tnL3extOutName'),
-    contract=dict(aci_class='vzBrCP', mo='brc-', key='name'),
-    entry=dict(aci_class='vzEntry', mo='e-', key='name'),
-    epg=dict(aci_class='fvAEPg', mo='epg-', key='name'),
-    epg_consumer=dict(aci_class='fvRsCons', mo='rscons-', key='tnVzBrCPName'),
-    epg_domain=dict(aci_class='fvRsDomAtt', mo='rsdomAtt-', key='tDn'),
-    epg_provider=dict(aci_class='fvRsProv', mo='rsprov-', key='tnVzBrCPName'),
-    epr_policy=dict(aci_class='fvEpRetPol', mo='epRPol-', key='name'),
-    export_policy=dict(aci_class='configExportP', mo='fabric/configexp-', key='name'),
-    fc_policy=dict(aci_class='fcIfPol', mo='infra/fcIfPol-', key='name'),
-    filter=dict(aci_class='vzFilter', mo='flt-', key='name'),
-    gateway_addr=dict(aci_class='fvSubnet', mo='subnet-', key='ip'),
-    import_policy=dict(aci_class='configImportP', mo='fabric/configimp-', key='name'),
-    l2_policy=dict(aci_class='l2IfPol', mo='infra/l2IfP-', key='name'),
-    lldp_policy=dict(aci_class='lldpIfPol', mo='infra/lldpIfP-', key='name'),
-    mcp=dict(aci_class='mcpIfPol', mo='infra/mcpIfP-', key='name'),
-    monitoring_policy=dict(aci_class='monEPGPol', mo='monepg-', key='name'),
-    port_channel=dict(aci_class='lacpLagPol', mo='infra/lacplagp-', key='name'),
-    port_security=dict(aci_class='l2PortSecurityPol', mo='infra/portsecurityP-', key='name'),
-    rtp=dict(aci_class='l3extRouteTagPol', mo='rttag-', key='name'),
-    snapshot=dict(aci_class='configSnapshot', mo='snapshot-', key='name'),
-    snapshot_container=dict(aci_class='configSnapshotCont', mo='backupst/snapshots-', key='name'),
-    subject=dict(aci_class='vzSubj', mo='subj-', key='name'),
-    subject_filter=dict(aci_class='vzRsSubjFiltAtt', mo='rssubjFiltAtt-', key='tnVzFilterName'),
-    taboo_contract=dict(aci_class='vzTaboo', mo='taboo-', key='name'),
-    tenant=dict(aci_class='fvTenant', mo='tn-', key='name'),
-    tenant_span_dst_grp=dict(aci_class='spanDestGrp', mo='destgrp-', key='name'),
-    tenant_span_src_grp=dict(aci_class='spanSrcGrp', mo='srcgrp-', key='name'),
-    tenant_span_src_grp_dst_grp=dict(aci_class='spanSpanLbl', mo='spanlbl-', key='name'),
-    vrf=dict(aci_class='fvCtx', mo='ctx-', key='name'),
-)
-'''
 
 
 class ACIModule(object):
@@ -124,6 +89,7 @@ class ACIModule(object):
         self.params = module.params
         self.result = dict(changed=False)
         self.headers = dict()
+        self.child_classes = set()
 
         # error output
         self.error = dict(code=None, text=None)
@@ -178,23 +144,6 @@ class ACIModule(object):
         elif value is False:
             return false
 
-        # When we expect value is of type=raw, deprecate in Ansible v2.8 (and all modules use type=bool)
-        try:
-            # This supports all Ansible boolean types
-            bool_value = boolean(value)
-            if bool_value is True:
-                return true
-            elif bool_value is False:
-                return false
-        except:
-            # This provides backward compatibility to Ansible v2.4, deprecate in Ansible v2.8
-            if value == true:
-                self.module.deprecate("Boolean value '%s' is no longer valid, please use 'yes' as a boolean value." % value, '2.9')
-                return true
-            elif value == false:
-                self.module.deprecate("Boolean value '%s' is no longer valid, please use 'no' as a boolean value." % value, '2.9')
-                return false
-
         # If all else fails, escalate back to user
         self.module.fail_json(msg="Boolean value '%s' is an invalid ACI boolean value.")
 
@@ -202,7 +151,7 @@ class ACIModule(object):
         ''' Return an ACI-compatible ISO8601 formatted time: 2123-12-12T00:00:00.000+00:00 '''
         try:
             return dt.isoformat(timespec='milliseconds')
-        except:
+        except Exception:
             tz = dt.strftime('%z')
             return '%s.%03d%s:%s' % (dt.strftime('%Y-%m-%dT%H:%M:%S'), dt.microsecond / 1000, tz[:3], tz[3:])
 
@@ -210,26 +159,14 @@ class ACIModule(object):
         ''' Set protocol based on use_ssl parameter '''
 
         # Set protocol for further use
-        if 'protocol' in self.params and self.params['protocol'] in ('http', 'https'):
-            self.module.deprecate("Parameter 'protocol' is deprecated, please use 'use_ssl' instead.", '2.6')
-        elif 'protocol' not in self.params or self.params['protocol'] is None:
-            self.params['protocol'] = 'https' if self.params.get('use_ssl', True) else 'http'
-        else:
-            self.module.fail_json(msg="Parameter 'protocol' needs to be one of ( http, https )")
+        self.params['protocol'] = 'https' if self.params.get('use_ssl', True) else 'http'
 
     def define_method(self):
         ''' Set method based on state parameter '''
 
-        # Handle deprecated method/action parameter
-        if self.params['method']:
-            # Deprecate only if state was a valid option (not for aci_rest)
-            if 'state' in self.module.argument_spec:
-                self.module.deprecate("Parameter 'method' or 'action' is deprecated, please use 'state' instead", '2.6')
-            method_map = dict(delete='absent', get='query', post='present')
-            self.params['state'] = method_map[self.params['method']]
-        else:
-            state_map = dict(absent='delete', present='post', query='get')
-            self.params['method'] = state_map[self.params['state']]
+        # Set method for further use
+        state_map = dict(absent='delete', present='post', query='get')
+        self.params['method'] = state_map[self.params['state']]
 
     def login(self):
         ''' Log in to APIC '''
@@ -275,14 +212,39 @@ class ACIModule(object):
         if payload is None:
             payload = ''
 
-        # Use the private key basename (without extension) as certificate_name
-        if self.params['certificate_name'] is None:
-            self.params['certificate_name'] = os.path.basename(os.path.splitext(self.params['private_key'])[0])
-
-        try:
-            sig_key = load_privatekey(FILETYPE_PEM, open(self.params['private_key'], 'r').read())
-        except:
-            self.module.fail_json(msg='Cannot load private key %s' % self.params['private_key'])
+        # Check if we got a private key. This allows the use of vaulting the private key.
+        if self.params['private_key'].startswith('-----BEGIN PRIVATE KEY-----'):
+            try:
+                sig_key = load_privatekey(FILETYPE_PEM, self.params['private_key'])
+            except Exception:
+                self.module.fail_json(msg="Cannot load provided 'private_key' parameter.")
+            # Use the username as the certificate_name value
+            if self.params['certificate_name'] is None:
+                self.params['certificate_name'] = self.params['username']
+        elif self.params['private_key'].startswith('-----BEGIN CERTIFICATE-----'):
+            self.module.fail_json(msg="Provided 'private_key' parameter value appears to be a certificate. Please correct.")
+        else:
+            # If we got a private key file, read from this file.
+            # NOTE: Avoid exposing any other credential as a filename in output...
+            if not os.path.exists(self.params['private_key']):
+                self.module.fail_json(msg="The provided private key file does not appear to exist. Is it a filename?")
+            try:
+                with open(self.params['private_key'], 'r') as fh:
+                    private_key_content = fh.read()
+            except Exception:
+                self.module.fail_json(msg="Cannot open private key file '%s'." % self.params['private_key'])
+            if private_key_content.startswith('-----BEGIN PRIVATE KEY-----'):
+                try:
+                    sig_key = load_privatekey(FILETYPE_PEM, private_key_content)
+                except Exception:
+                    self.module.fail_json(msg="Cannot load private key file '%s'." % self.params['private_key'])
+                # Use the private key basename (without extension) as certificate_name
+                if self.params['certificate_name'] is None:
+                    self.params['certificate_name'] = os.path.basename(os.path.splitext(self.params['private_key'])[0])
+            elif private_key_content.startswith('-----BEGIN CERTIFICATE-----'):
+                self.module.fail_json(msg="Provided private key file %s appears to be a certificate. Please correct." % self.params['private_key'])
+            else:
+                self.module.fail_json(msg="Provided private key file '%s' does not appear to be a private key. Please correct." % self.params['private_key'])
 
         # NOTE: ACI documentation incorrectly adds a space between method and path
         sig_request = method + path + payload
@@ -291,7 +253,7 @@ class ACIModule(object):
         self.headers['Cookie'] = 'APIC-Certificate-Algorithm=v1.0; ' +\
                                  'APIC-Certificate-DN=%s; ' % sig_dn +\
                                  'APIC-Certificate-Fingerprint=fingerprint; ' +\
-                                 'APIC-Request-Signature=%s' % sig_signature
+                                 'APIC-Request-Signature=%s' % to_native(sig_signature)
 
     def response_json(self, rawoutput):
         ''' Handle APIC JSON response output '''
@@ -359,7 +321,7 @@ class ACIModule(object):
             self.url = '%(protocol)s://%(host)s/' % self.params + path.lstrip('/')
 
         # Sign and encode request as to APIC's wishes
-        if self.params['private_key'] is not None:
+        if self.params['private_key']:
             self.cert_auth(path=path, payload=payload)
 
         # Perform request
@@ -396,7 +358,7 @@ class ACIModule(object):
             self.url = '%(protocol)s://%(host)s/' % self.params + path.lstrip('/')
 
         # Sign and encode request as to APIC's wishes
-        if self.params['private_key'] is not None:
+        if self.params['private_key']:
             self.cert_auth(path=path, method='GET')
 
         # Perform request
@@ -434,14 +396,217 @@ class ACIModule(object):
         if self.result['diff']['before'] != self.result['diff']['after']:
             self.result['changed'] = True
 
+    # TODO: This could be designed to update existing keys
+    def update_qs(self, params):
+        ''' Append key-value pairs to self.filter_string '''
+        accepted_params = dict((k, v) for (k, v) in params.items() if v is not None)
+        if accepted_params:
+            if self.filter_string:
+                self.filter_string += '&'
+            else:
+                self.filter_string = '?'
+            self.filter_string += '&'.join(['%s=%s' % (k, v) for (k, v) in accepted_params.items()])
+
+    # TODO: This could be designed to accept multiple obj_classes and keys
+    def build_filter(self, obj_class, params):
+        ''' Build an APIC filter based on obj_class and key-value pairs '''
+        accepted_params = dict((k, v) for (k, v) in params.items() if v is not None)
+        if len(accepted_params) == 1:
+            return ','.join('eq({0}.{1},"{2}")'.format(obj_class, k, v) for (k, v) in accepted_params.items())
+        elif len(accepted_params) > 1:
+            return 'and(' + ','.join(['eq({0}.{1},"{2}")'.format(obj_class, k, v) for (k, v) in accepted_params.items()]) + ')'
+
+    def _deep_url_path_builder(self, obj):
+        target_class = obj['target_class']
+        target_filter = obj['target_filter']
+        subtree_class = obj['subtree_class']
+        subtree_filter = obj['subtree_filter']
+        object_rn = obj['object_rn']
+        mo = obj['module_object']
+        add_subtree_filter = obj['add_subtree_filter']
+        add_target_filter = obj['add_target_filter']
+
+        if self.module.params['state'] in ('absent', 'present') and mo is not None:
+            self.path = 'api/mo/uni/{0}.json'.format(object_rn)
+            self.update_qs({'rsp-prop-include': 'config-only'})
+
+        else:
+            # State is 'query'
+            if object_rn is not None:
+                # Query for a specific object in the module's class
+                self.path = 'api/mo/uni/{0}.json'.format(object_rn)
+            else:
+                self.path = 'api/class/{0}.json'.format(target_class)
+
+            if add_target_filter:
+                self.update_qs(
+                    {'query-target-filter': self.build_filter(target_class, target_filter)})
+
+            if add_subtree_filter:
+                self.update_qs(
+                    {'rsp-subtree-filter': self.build_filter(subtree_class, subtree_filter)})
+
+        if 'port' in self.params and self.params['port'] is not None:
+            self.url = '{protocol}://{host}:{port}/{path}'.format(
+                path=self.path, **self.module.params)
+
+        else:
+            self.url = '{protocol}://{host}/{path}'.format(
+                path=self.path, **self.module.params)
+
+        if self.child_classes:
+            self.update_qs(
+                {'rsp-subtree': 'full', 'rsp-subtree-class': ','.join(sorted(self.child_classes))})
+
+    def _deep_url_parent_object(self, parent_objects, parent_class):
+
+        for parent_object in parent_objects:
+            if parent_object['aci_class'] is parent_class:
+                return parent_object
+
+        return None
+
+    def construct_deep_url(self, target_object, parent_objects=None, child_classes=None):
+        """
+        This method is used to retrieve the appropriate URL path and filter_string to make the request to the APIC.
+
+        :param target_object: The target class dictionary containing parent_class, aci_class, aci_rn, target_filter, and module_object keys.
+        :param parent_objects: The parent class list of dictionaries containing parent_class, aci_class, aci_rn, target_filter, and module_object keys.
+        :param child_classes: The list of child classes that the module supports along with the object.
+        :type target_object: dict
+        :type parent_objects: list[dict]
+        :type child_classes: list[string]
+        :return: The path and filter_string needed to build the full URL.
+        """
+
+        self.filter_string = ''
+        rn_builder = None
+        subtree_classes = None
+        add_subtree_filter = False
+        add_target_filter = False
+        has_target_query = False
+        has_target_query_compare = False
+        has_target_query_difference = False
+        has_target_query_called = False
+
+        if child_classes is None:
+            self.child_classes = set()
+        else:
+            self.child_classes = set(child_classes)
+
+        target_parent_class = target_object['parent_class']
+        target_class = target_object['aci_class']
+        target_rn = target_object['aci_rn']
+        target_filter = target_object['target_filter']
+        target_module_object = target_object['module_object']
+
+        url_path_object = dict(
+            target_class=target_class,
+            target_filter=target_filter,
+            subtree_class=target_class,
+            subtree_filter=target_filter,
+            module_object=target_module_object
+        )
+
+        if target_module_object is not None:
+            rn_builder = target_rn
+        else:
+            has_target_query = True
+            has_target_query_compare = True
+
+        if parent_objects is not None:
+            current_parent_class = target_parent_class
+            has_parent_query_compare = False
+            has_parent_query_difference = False
+            is_first_parent = True
+            is_single_parent = None
+            search_classes = set()
+
+            while current_parent_class != 'uni':
+                parent_object = self._deep_url_parent_object(
+                    parent_objects=parent_objects, parent_class=current_parent_class)
+
+                if parent_object is not None:
+                    parent_parent_class = parent_object['parent_class']
+                    parent_class = parent_object['aci_class']
+                    parent_rn = parent_object['aci_rn']
+                    parent_filter = parent_object['target_filter']
+                    parent_module_object = parent_object['module_object']
+
+                    if is_first_parent:
+                        is_single_parent = True
+                    else:
+                        is_single_parent = False
+                    is_first_parent = False
+
+                    if parent_parent_class != 'uni':
+                        search_classes.add(parent_class)
+
+                    if parent_module_object is not None:
+                        if rn_builder is not None:
+                            rn_builder = '{0}/{1}'.format(parent_rn,
+                                                          rn_builder)
+                        else:
+                            rn_builder = parent_rn
+
+                        url_path_object['target_class'] = parent_class
+                        url_path_object['target_filter'] = parent_filter
+
+                        has_target_query = False
+                    else:
+                        rn_builder = None
+                        subtree_classes = search_classes
+
+                        has_target_query = True
+                        if is_single_parent:
+                            has_parent_query_compare = True
+
+                    current_parent_class = parent_parent_class
+                else:
+                    raise ValueError("Reference error for parent_class '{0}'. Each parent_class must reference a valid object".format(current_parent_class))
+
+                if not has_target_query_difference and not has_target_query_called:
+                    if has_target_query is not has_target_query_compare:
+                        has_target_query_difference = True
+                else:
+                    if not has_parent_query_difference and has_target_query is not has_parent_query_compare:
+                        has_parent_query_difference = True
+                has_target_query_called = True
+
+            if not has_parent_query_difference and has_parent_query_compare and target_module_object is not None:
+                add_target_filter = True
+
+            elif has_parent_query_difference and target_module_object is not None:
+                add_subtree_filter = True
+                self.child_classes.add(target_class)
+
+                if has_target_query:
+                    add_target_filter = True
+
+            elif has_parent_query_difference and not has_target_query and target_module_object is None:
+                self.child_classes.add(target_class)
+                self.child_classes.update(subtree_classes)
+
+            elif not has_parent_query_difference and not has_target_query and target_module_object is None:
+                self.child_classes.add(target_class)
+
+            elif not has_target_query and is_single_parent and target_module_object is None:
+                self.child_classes.add(target_class)
+
+        url_path_object['object_rn'] = rn_builder
+        url_path_object['add_subtree_filter'] = add_subtree_filter
+        url_path_object['add_target_filter'] = add_target_filter
+
+        self._deep_url_path_builder(url_path_object)
+
     def construct_url(self, root_class, subclass_1=None, subclass_2=None, subclass_3=None, child_classes=None):
         """
         This method is used to retrieve the appropriate URL path and filter_string to make the request to the APIC.
 
-        :param root_class: The top-level class dictionary containing aci_class, aci_rn, filter_target, and module_object keys.
-        :param sublass_1: The second-level class dictionary containing aci_class, aci_rn, filter_target, and module_object keys.
-        :param sublass_2: The third-level class dictionary containing aci_class, aci_rn, filter_target, and module_object keys.
-        :param sublass_3: The fourth-level class dictionary containing aci_class, aci_rn, filter_target, and module_object keys.
+        :param root_class: The top-level class dictionary containing aci_class, aci_rn, target_filter, and module_object keys.
+        :param sublass_1: The second-level class dictionary containing aci_class, aci_rn, target_filter, and module_object keys.
+        :param sublass_2: The third-level class dictionary containing aci_class, aci_rn, target_filter, and module_object keys.
+        :param sublass_3: The fourth-level class dictionary containing aci_class, aci_rn, target_filter, and module_object keys.
         :param child_classes: The list of child classes that the module supports along with the object.
         :type root_class: dict
         :type subclass_1: dict
@@ -450,207 +615,206 @@ class ACIModule(object):
         :type child_classes: list
         :return: The path and filter_string needed to build the full URL.
         """
+        self.filter_string = ''
+
         if child_classes is None:
-            child_includes = ''
+            self.child_classes = set()
         else:
-            child_includes = ','.join(child_classes)
-            child_includes = '&rsp-subtree=full&rsp-subtree-class=' + child_includes
+            self.child_classes = set(child_classes)
 
         if subclass_3 is not None:
-            path, filter_string = self._construct_url_4(root_class, subclass_1, subclass_2, subclass_3, child_includes)
+            self._construct_url_4(root_class, subclass_1, subclass_2, subclass_3)
         elif subclass_2 is not None:
-            path, filter_string = self._construct_url_3(root_class, subclass_1, subclass_2, child_includes)
+            self._construct_url_3(root_class, subclass_1, subclass_2)
         elif subclass_1 is not None:
-            path, filter_string = self._construct_url_2(root_class, subclass_1, child_includes)
+            self._construct_url_2(root_class, subclass_1)
         else:
-            path, filter_string = self._construct_url_1(root_class, child_includes)
+            self._construct_url_1(root_class)
 
-        self.path = path
         if 'port' in self.params and self.params['port'] is not None:
-            self.url = '{0}://{1}:{2}/{3}'.format(self.module.params['protocol'], self.module.params['host'], self.module.params['port'], path)
+            self.url = '{protocol}://{host}:{port}/{path}'.format(path=self.path, **self.module.params)
         else:
-            self.url = '{0}://{1}/{2}'.format(self.module.params['protocol'], self.module.params['host'], path)
-        self.filter_string = filter_string
+            self.url = '{protocol}://{host}/{path}'.format(path=self.path, **self.module.params)
 
-    def _construct_url_1(self, obj, child_includes):
+        if self.child_classes:
+            # Append child_classes to filter_string if filter string is empty
+            self.update_qs({'rsp-subtree': 'full', 'rsp-subtree-class': ','.join(sorted(self.child_classes))})
+
+    def _construct_url_1(self, obj):
         """
-        This method is used by get_url when the object is the top-level class.
+        This method is used by construct_url when the object is the top-level class.
         """
         obj_class = obj['aci_class']
         obj_rn = obj['aci_rn']
+        obj_filter = obj['target_filter']
         mo = obj['module_object']
 
-        # State is present or absent
-        if self.module.params['state'] != 'query':
-            path = 'api/mo/uni/{0}.json'.format(obj_rn)
-            filter_string = '?rsp-prop-include=config-only' + child_includes
-        # Query for all objects of the module's class
+        if self.module.params['state'] in ('absent', 'present'):
+            # State is absent or present
+            self.path = 'api/mo/uni/{0}.json'.format(obj_rn)
+            self.update_qs({'rsp-prop-include': 'config-only'})
         elif mo is None:
-            path = 'api/class/{0}.json'.format(obj_class)
-            filter_string = ''
-        # Query for a specific object in the module's class
+            # Query for all objects of the module's class (filter by properties)
+            self.path = 'api/class/{0}.json'.format(obj_class)
+            self.update_qs({'query-target-filter': self.build_filter(obj_class, obj_filter)})
         else:
-            path = 'api/mo/uni/{0}.json'.format(obj_rn)
-            filter_string = ''
+            # Query for a specific object in the module's class
+            self.path = 'api/mo/uni/{0}.json'.format(obj_rn)
 
-        # Append child_includes to filter_string if filter string is empty
-        if child_includes is not None and filter_string == '':
-            filter_string = child_includes.replace('&', '?', 1)
-
-        return path, filter_string
-
-    def _construct_url_2(self, parent, obj, child_includes):
+    def _construct_url_2(self, parent, obj):
         """
-        This method is used by get_url when the object is the second-level class.
+        This method is used by construct_url when the object is the second-level class.
         """
+        parent_class = parent['aci_class']
         parent_rn = parent['aci_rn']
+        parent_filter = parent['target_filter']
         parent_obj = parent['module_object']
         obj_class = obj['aci_class']
         obj_rn = obj['aci_rn']
-        obj_filter = obj['filter_target']
+        obj_filter = obj['target_filter']
         mo = obj['module_object']
 
-        if not child_includes:
-            self_child_includes = '?rsp-subtree=full&rsp-subtree-class=' + obj_class
-        else:
-            self_child_includes = child_includes.replace('&', '?', 1) + ',' + obj_class
-
-        # State is present or absent
-        if self.module.params['state'] != 'query':
-            path = 'api/mo/uni/{0}/{1}.json'.format(parent_rn, obj_rn)
-            filter_string = '?rsp-prop-include=config-only' + child_includes
-        # Query for all objects of the module's class
-        elif mo is None and parent_obj is None:
-            path = 'api/class/{0}.json'.format(obj_class)
-            filter_string = ''
-        # Queries when parent object is provided
-        elif parent_obj is not None:
-            # Query for specific object in the module's class
-            if mo is not None:
-                path = 'api/mo/uni/{0}/{1}.json'.format(parent_rn, obj_rn)
-                filter_string = ''
+        if self.module.params['state'] in ('absent', 'present'):
+            # State is absent or present
+            self.path = 'api/mo/uni/{0}/{1}.json'.format(parent_rn, obj_rn)
+            self.update_qs({'rsp-prop-include': 'config-only'})
+        elif parent_obj is None and mo is None:
+            # Query for all objects of the module's class
+            self.path = 'api/class/{0}.json'.format(obj_class)
+            self.update_qs({'query-target-filter': self.build_filter(obj_class, obj_filter)})
+        elif parent_obj is None:  # mo is known
+            # Query for all objects of the module's class that match the provided ID value
+            self.path = 'api/class/{0}.json'.format(obj_class)
+            self.update_qs({'query-target-filter': self.build_filter(obj_class, obj_filter)})
+        elif mo is None:  # parent_obj is known
             # Query for all object's of the module's class that belong to a specific parent object
-            else:
-                path = 'api/mo/uni/{0}.json'.format(parent_rn)
-                filter_string = self_child_includes
-        # Query for all objects of the module's class that match the provided ID value
+            self.child_classes.add(obj_class)
+            self.path = 'api/mo/uni/{0}.json'.format(parent_rn)
         else:
-            path = 'api/class/{0}.json'.format(obj_class)
-            filter_string = '?query-target-filter={0}'.format(obj_filter) + child_includes
+            # Query for specific object in the module's class
+            self.path = 'api/mo/uni/{0}/{1}.json'.format(parent_rn, obj_rn)
 
-        # Append child_includes to filter_string if filter string is empty
-        if child_includes is not None and filter_string == '':
-            filter_string = child_includes.replace('&', '?', 1)
-
-        return path, filter_string
-
-    def _construct_url_3(self, root, parent, obj, child_includes):
+    def _construct_url_3(self, root, parent, obj):
         """
-        This method is used by get_url when the object is the third-level class.
+        This method is used by construct_url when the object is the third-level class.
         """
+        root_class = root['aci_class']
         root_rn = root['aci_rn']
+        root_filter = root['target_filter']
         root_obj = root['module_object']
         parent_class = parent['aci_class']
         parent_rn = parent['aci_rn']
-        parent_filter = parent['filter_target']
+        parent_filter = parent['target_filter']
         parent_obj = parent['module_object']
         obj_class = obj['aci_class']
         obj_rn = obj['aci_rn']
-        obj_filter = obj['filter_target']
+        obj_filter = obj['target_filter']
         mo = obj['module_object']
 
-        if not child_includes:
-            self_child_includes = '&rsp-subtree=full&rsp-subtree-class=' + obj_class
-        else:
-            self_child_includes = '{0},{1}'.format(child_includes, obj_class)
-
-        if not child_includes:
-            parent_self_child_includes = '&rsp-subtree=full&rsp-subtree-class={0},{1}'.format(parent_class, obj_class)
-        else:
-            parent_self_child_includes = '{0},{1},{2}'.format(child_includes, parent_class, obj_class)
-
-        # State is ablsent or present
-        if self.module.params['state'] != 'query':
-            path = 'api/mo/uni/{0}/{1}/{2}.json'.format(root_rn, parent_rn, obj_rn)
-            filter_string = '?rsp-prop-include=config-only' + child_includes
-        # Query for all objects of the module's class
-        elif mo is None and parent_obj is None and root_obj is None:
-            path = 'api/class/{0}.json'.format(obj_class)
-            filter_string = ''
-        # Queries when root object is provided
-        elif root_obj is not None:
-            # Queries when parent object is provided
-            if parent_obj is not None:
-                # Query for a specific object of the module's class
-                if mo is not None:
-                    path = 'api/mo/uni/{0}/{1}/{2}.json'.format(root_rn, parent_rn, obj_rn)
-                    filter_string = ''
-                # Query for all objects of the module's class that belong to a specific parent object
-                else:
-                    path = 'api/mo/uni/{0}/{1}.json'.format(root_rn, parent_rn)
-                    filter_string = self_child_includes.replace('&', '?', 1)
-            # Query for all objects of the module's class that match the provided ID value and belong to a specefic root object
-            elif mo is not None:
-                path = 'api/mo/uni/{0}.json'.format(root_rn)
-                filter_string = '?rsp-subtree-filter={0}{1}'.format(obj_filter, self_child_includes)
-            # Query for all objects of the module's class that belong to a specific root object
-            else:
-                path = 'api/mo/uni/{0}.json'.format(root_rn)
-                filter_string = '?' + parent_self_child_includes
-        # Queries when parent object is provided but root object is not provided
-        elif parent_obj is not None:
-            # Query for all objects of the module's class that belong to any parent class
-            # matching the provided ID values for both object and parent object
-            if mo is not None:
-                path = 'api/class/{0}.json'.format(parent_class)
-                filter_string = '?query-target-filter={0}{1}&rsp-subtree-filter={2}'.format(
-                    parent_filter, self_child_includes, obj_filter)
+        if self.module.params['state'] in ('absent', 'present'):
+            # State is absent or present
+            self.path = 'api/mo/uni/{0}/{1}/{2}.json'.format(root_rn, parent_rn, obj_rn)
+            self.update_qs({'rsp-prop-include': 'config-only'})
+        elif root_obj is None and parent_obj is None and mo is None:
+            # Query for all objects of the module's class
+            self.path = 'api/class/{0}.json'.format(obj_class)
+            self.update_qs({'query-target-filter': self.build_filter(obj_class, obj_filter)})
+        elif root_obj is None and parent_obj is None:  # mo is known
+            # Query for all objects of the module's class matching the provided ID value of the object
+            self.path = 'api/class/{0}.json'.format(obj_class)
+            self.update_qs({'query-target-filter': self.build_filter(obj_class, obj_filter)})
+        elif root_obj is None and mo is None:  # parent_obj is known
             # Query for all objects of the module's class that belong to any parent class
             # matching the provided ID value for the parent object
-            else:
-                path = 'api/class/{0}.json'.format(parent_class)
-                filter_string = '?query-target-filter={0}{1}'.format(parent_filter, self_child_includes)
-        # Query for all objects of the module's class matching the provided ID value of the object
+            self.child_classes.add(obj_class)
+            self.path = 'api/class/{0}.json'.format(parent_class)
+            self.update_qs({'query-target-filter': self.build_filter(parent_class, parent_filter)})
+        elif parent_obj is None and mo is None:  # root_obj is known
+            # Query for all objects of the module's class that belong to a specific root object
+            self.child_classes.update([parent_class, obj_class])
+            self.path = 'api/mo/uni/{0}.json'.format(root_rn)
+            # NOTE: No need to select by root_filter
+            # self.update_qs({'query-target-filter': self.build_filter(root_class, root_filter)})
+        elif root_obj is None:  # mo and parent_obj are known
+            # Query for all objects of the module's class that belong to any parent class
+            # matching the provided ID values for both object and parent object
+            self.child_classes.add(obj_class)
+            self.path = 'api/class/{0}.json'.format(parent_class)
+            self.update_qs({'query-target-filter': self.build_filter(parent_class, parent_filter)})
+            self.update_qs({'rsp-subtree-filter': self.build_filter(obj_class, obj_filter)})
+        elif parent_obj is None:  # mo and root_obj are known
+            # Query for all objects of the module's class that match the provided ID value and belong to a specific root object
+            self.child_classes.add(obj_class)
+            self.path = 'api/mo/uni/{0}.json'.format(root_rn)
+            # NOTE: No need to select by root_filter
+            # self.update_qs({'query-target-filter': self.build_filter(root_class, root_filter)})
+            # TODO: Filter by parent_filter and obj_filter
+            self.update_qs({'rsp-subtree-filter': self.build_filter(obj_class, obj_filter)})
+        elif mo is None:  # root_obj and parent_obj are known
+            # Query for all objects of the module's class that belong to a specific parent object
+            self.child_classes.add(obj_class)
+            self.path = 'api/mo/uni/{0}/{1}.json'.format(root_rn, parent_rn)
+            # NOTE: No need to select by parent_filter
+            # self.update_qs({'query-target-filter': self.build_filter(parent_class, parent_filter)})
         else:
-            path = 'api/class/{0}.json'.format(obj_class)
-            filter_string = '?query-target-filter={0}'.format(obj_filter) + child_includes
+            # Query for a specific object of the module's class
+            self.path = 'api/mo/uni/{0}/{1}/{2}.json'.format(root_rn, parent_rn, obj_rn)
 
-        # append child_includes to filter_string if filter string is empty
-        if child_includes is not None and filter_string == '':
-            filter_string = child_includes.replace('&', '?', 1)
-
-        return path, filter_string
-
-    def _construct_url_4(self, root, sec, parent, obj, child_includes):
+    def _construct_url_4(self, root, sec, parent, obj):
         """
-        This method is used by get_url when the object is the third-level class.
+        This method is used by construct_url when the object is the fourth-level class.
         """
-        # root_class = root['aci_class']
+        root_class = root['aci_class']
         root_rn = root['aci_rn']
-        # root_filter = root['filter_target']
-        # root_obj = root['module_object']
-        # sec_class = sec['aci_class']
+        root_filter = root['target_filter']
+        root_obj = root['module_object']
+        sec_class = sec['aci_class']
         sec_rn = sec['aci_rn']
-        # sec_filter = sec['filter_target']
-        # sec_obj = sec['module_object']
-        # parent_class = parent['aci_class']
+        sec_filter = sec['target_filter']
+        sec_obj = sec['module_object']
+        parent_class = parent['aci_class']
         parent_rn = parent['aci_rn']
-        # parent_filter = parent['filter_target']
-        # parent_obj = parent['module_object']
+        parent_filter = parent['target_filter']
+        parent_obj = parent['module_object']
         obj_class = obj['aci_class']
         obj_rn = obj['aci_rn']
-        # obj_filter = obj['filter_target']
-        # mo = obj['module_object']
+        obj_filter = obj['target_filter']
+        mo = obj['module_object']
 
-        # State is ablsent or present
-        if self.module.params['state'] != 'query':
-            path = 'api/mo/uni/{0}/{1}/{2}/{3}.json'.format(root_rn, sec_rn, parent_rn, obj_rn)
-            filter_string = '?rsp-prop-include=config-only' + child_includes
+        if self.child_classes is None:
+            self.child_classes = [obj_class]
+
+        if self.module.params['state'] in ('absent', 'present'):
+            # State is absent or present
+            self.path = 'api/mo/uni/{0}/{1}/{2}/{3}.json'.format(root_rn, sec_rn, parent_rn, obj_rn)
+            self.update_qs({'rsp-prop-include': 'config-only'})
+        # TODO: Add all missing cases
+        elif root_obj is None:
+            self.child_classes.add(obj_class)
+            self.path = 'api/class/{0}.json'.format(obj_class)
+            self.update_qs({'query-target-filter': self.build_filter(obj_class, obj_filter)})
+        elif sec_obj is None:
+            self.child_classes.add(obj_class)
+            self.path = 'api/mo/uni/{0}.json'.format(root_rn)
+            # NOTE: No need to select by root_filter
+            # self.update_qs({'query-target-filter': self.build_filter(root_class, root_filter)})
+            # TODO: Filter by sec_filter, parent and obj_filter
+            self.update_qs({'rsp-subtree-filter': self.build_filter(obj_class, obj_filter)})
+        elif parent_obj is None:
+            self.child_classes.add(obj_class)
+            self.path = 'api/mo/uni/{0}/{1}.json'.format(root_rn, sec_rn)
+            # NOTE: No need to select by sec_filter
+            # self.update_qs({'query-target-filter': self.build_filter(sec_class, sec_filter)})
+            # TODO: Filter by parent_filter and obj_filter
+            self.update_qs({'rsp-subtree-filter': self.build_filter(obj_class, obj_filter)})
+        elif mo is None:
+            self.child_classes.add(obj_class)
+            self.path = 'api/mo/uni/{0}/{1}/{2}.json'.format(root_rn, sec_rn, parent_rn)
+            # NOTE: No need to select by parent_filter
+            # self.update_qs({'query-target-filter': self.build_filter(parent_class, parent_filter)})
         else:
-            path = 'api/class/{0}.json'.format(obj_class)
-            filter_string = child_includes
-
-        return path, filter_string
+            # Query for a specific object of the module's class
+            self.path = 'api/mo/uni/{0}/{1}/{2}/{3}.json'.format(root_rn, sec_rn, parent_rn, obj_rn)
 
     def delete_config(self):
         """
@@ -664,7 +828,7 @@ class ACIModule(object):
 
         elif not self.module.check_mode:
             # Sign and encode request as to APIC's wishes
-            if self.params['private_key'] is not None:
+            if self.params['private_key']:
                 self.cert_auth(method='DELETE')
 
             resp, info = fetch_url(self.module, self.url,
@@ -800,7 +964,7 @@ class ACIModule(object):
         uri = self.url + self.filter_string
 
         # Sign and encode request as to APIC's wishes
-        if self.params['private_key'] is not None:
+        if self.params['private_key']:
             self.cert_auth(path=self.path + self.filter_string, method='GET')
 
         resp, info = fetch_url(self.module, uri,
@@ -842,11 +1006,15 @@ class ACIModule(object):
             proposed_config = proposed_child[key]['attributes']
             existing_config = None
 
+            # FIXME: Design causes issues for repeated child_classes
             # get existing dictionary from the list of existing to use for comparison
             for child in existing_children:
                 if child.get(child_class):
                     existing_config = child[key]['attributes']
-                    break
+                    # NOTE: This is an ugly fix
+                    # Return the one that is a subset match
+                    if set(proposed_config.items()).issubset(set(existing_config.items())):
+                        break
 
         return child_class, proposed_config, existing_config
 
@@ -897,7 +1065,7 @@ class ACIModule(object):
             return
         elif not self.module.check_mode:
             # Sign and encode request as to APIC's wishes
-            if self.params['private_key'] is not None:
+            if self.params['private_key']:
                 self.cert_auth(method='POST', payload=json.dumps(self.config))
 
             resp, info = fetch_url(self.module, self.url,

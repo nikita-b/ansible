@@ -41,13 +41,9 @@ from ansible.playbook.task import Task
 from ansible.plugins.loader import action_loader
 from ansible.plugins.strategy import StrategyBase
 from ansible.template import Templar
+from ansible.utils.display import Display
 
-
-try:
-    from __main__ import display
-except ImportError:
-    from ansible.utils.display import Display
-    display = Display()
+display = Display()
 
 
 class StrategyModule(StrategyBase):
@@ -113,7 +109,7 @@ class StrategyModule(StrategyBase):
         if host_tasks_to_run:
             try:
                 lowest_cur_block = min(
-                    (s.cur_block for h, (s, t) in host_tasks_to_run
+                    (iterator.get_active_state(s).cur_block for h, (s, t) in host_tasks_to_run
                      if s.run_state != PlayIterator.ITERATING_COMPLETE))
             except ValueError:
                 lowest_cur_block = None
@@ -125,6 +121,7 @@ class StrategyModule(StrategyBase):
         for (k, v) in host_tasks_to_run:
             (s, t) = v
 
+            s = iterator.get_active_state(s)
             if s.cur_block > lowest_cur_block:
                 # Not the current block, ignore it
                 continue
@@ -158,6 +155,7 @@ class StrategyModule(StrategyBase):
                 if host_state_task is None:
                     continue
                 (s, t) = host_state_task
+                s = iterator.get_active_state(s)
                 if t is None:
                     continue
                 if s.run_state == cur_state and s.cur_block == cur_block:
@@ -204,9 +202,12 @@ class StrategyModule(StrategyBase):
         moving on to the next task
         '''
 
-        # iteratate over each task, while there is one left to run
+        # iterate over each task, while there is one left to run
         result = self._tqm.RUN_OK
         work_to_do = True
+
+        self._set_hosts_cache(iterator._play)
+
         while work_to_do and not self._tqm._terminated:
 
             try:
@@ -263,8 +264,10 @@ class StrategyModule(StrategyBase):
                         # for the linear strategy, we run meta tasks just once and for
                         # all hosts currently being iterated over rather than one host
                         results.extend(self._execute_meta(task, play_context, iterator, host))
-                        if task.args.get('_raw_params', None) != 'noop':
+                        if task.args.get('_raw_params', None) not in ('noop', 'reset_connection', 'end_host'):
                             run_once = True
+                        if (task.any_errors_fatal or run_once) and not task.ignore_errors:
+                            any_errors_fatal = True
                     else:
                         # handle step if needed, skip meta actions as they are used internally
                         if self._step and choose_step:
@@ -275,7 +278,8 @@ class StrategyModule(StrategyBase):
                                 break
 
                         display.debug("getting variables")
-                        task_vars = self._variable_manager.get_vars(play=iterator._play, host=host, task=task)
+                        task_vars = self._variable_manager.get_vars(play=iterator._play, host=host, task=task,
+                                                                    _hosts=self._hosts_cache, _hosts_all=self._hosts_cache_all)
                         self.add_tqm_variables(task_vars, play=iterator._play)
                         templar = Templar(loader=self._loader, variables=task_vars)
                         display.debug("done getting variables")
@@ -292,7 +296,7 @@ class StrategyModule(StrategyBase):
                             try:
                                 task.name = to_text(templar.template(task.name, fail_on_undefined=False), nonstring='empty')
                                 display.debug("done templating")
-                            except:
+                            except Exception:
                                 # just ignore any errors during task name templating,
                                 # we don't care if it just shows the raw name
                                 display.debug("templating failed for some reason")
@@ -324,16 +328,12 @@ class StrategyModule(StrategyBase):
 
                 self.update_active_connections(results)
 
-                try:
-                    included_files = IncludedFile.process_include_results(
-                        host_results,
-                        iterator=iterator,
-                        loader=self._loader,
-                        variable_manager=self._variable_manager
-                    )
-                except AnsibleError as e:
-                    # this is a fatal error, so we abort here regardless of block state
-                    return self._tqm.RUN_ERROR
+                included_files = IncludedFile.process_include_results(
+                    host_results,
+                    iterator=iterator,
+                    loader=self._loader,
+                    variable_manager=self._variable_manager
+                )
 
                 include_failure = False
                 if len(included_files) > 0:
@@ -355,7 +355,6 @@ class StrategyModule(StrategyBase):
                                     variable_manager=self._variable_manager,
                                     loader=self._loader,
                                 )
-                                self._tqm.update_handler_list([handler for handler_block in handler_blocks for handler in handler_block.block])
                             else:
                                 new_blocks = self._load_included_file(included_file, iterator=iterator)
 
@@ -363,10 +362,12 @@ class StrategyModule(StrategyBase):
                             for new_block in new_blocks:
                                 task_vars = self._variable_manager.get_vars(
                                     play=iterator._play,
-                                    task=included_file._task,
+                                    task=new_block._parent,
+                                    _hosts=self._hosts_cache,
+                                    _hosts_all=self._hosts_cache_all,
                                 )
                                 display.debug("filtering new block on tags")
-                                final_block = new_block.filter_tagged_tasks(play_context, task_vars)
+                                final_block = new_block.filter_tagged_tasks(task_vars)
                                 display.debug("done filtering new block on tags")
 
                                 noop_block = self._prepare_and_create_noop_block_from(final_block, task._parent, iterator)
@@ -402,7 +403,9 @@ class StrategyModule(StrategyBase):
                 failed_hosts = []
                 unreachable_hosts = []
                 for res in results:
-                    if res.is_failed() and iterator.is_failed(res._host):
+                    # execute_meta() does not set 'failed' in the TaskResult
+                    # so we skip checking it with the meta tasks and look just at the iterator
+                    if (res.is_failed() or res._task.action == 'meta') and iterator.is_failed(res._host):
                         failed_hosts.append(res._host.name)
                     elif res.is_unreachable():
                         unreachable_hosts.append(res._host.name)
@@ -412,6 +415,9 @@ class StrategyModule(StrategyBase):
                     dont_fail_states = frozenset([iterator.ITERATING_RESCUE, iterator.ITERATING_ALWAYS])
                     for host in hosts_left:
                         (s, _) = iterator.get_next_task_for_host(host, peek=True)
+                        # the state may actually be in a child state, use the get_active_state()
+                        # method in the iterator to figure out the true active state
+                        s = iterator.get_active_state(s)
                         if s.run_state not in dont_fail_states or \
                            s.run_state == iterator.ITERATING_RESCUE and s.fail_state & iterator.FAILED_RESCUE != 0:
                             self._tqm._failed_hosts[host.name] = True

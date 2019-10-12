@@ -19,9 +19,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-import json
-
-from ansible.compat.tests.mock import patch
+from units.compat.mock import patch
 from ansible.modules.network.vyos import vyos_command
 from units.modules.utils import set_module_args
 from .vyos_module import TestVyosModule, load_fixture
@@ -47,8 +45,7 @@ class TestVyosCommandModule(TestVyosModule):
 
             for item in commands:
                 try:
-                    obj = json.loads(item)
-                    command = obj['command']
+                    command = item['command']
                 except ValueError:
                     command = item
                 filename = str(command).replace(' ', '_')

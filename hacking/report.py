@@ -5,15 +5,16 @@
 from __future__ import (absolute_import, print_function)
 
 import argparse
+import json
 import os
-import requests
 import sqlite3
 import sys
+import yaml
 
 DATABASE_PATH = os.path.expanduser('~/.ansible/report.db')
 BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')) + '/'
 ANSIBLE_PATH = os.path.join(BASE_PATH, 'lib')
-ANSIBLE_TEST_PATH = os.path.join(BASE_PATH, 'test/runner')
+ANSIBLE_TEST_PATH = os.path.join(BASE_PATH, 'test/lib')
 
 if ANSIBLE_PATH not in sys.path:
     sys.path.insert(0, ANSIBLE_PATH)
@@ -21,8 +22,10 @@ if ANSIBLE_PATH not in sys.path:
 if ANSIBLE_TEST_PATH not in sys.path:
     sys.path.insert(0, ANSIBLE_TEST_PATH)
 
-from ansible.parsing.metadata import extract_metadata
-from lib.target import walk_integration_targets
+from ansible.module_utils.urls import open_url
+from ansible.parsing.plugin_docs import read_docstring
+
+from ansible_test._internal.target import walk_integration_targets
 
 
 def main():
@@ -94,12 +97,10 @@ def populate_modules():
 
             path = os.path.join(root, file_name)
 
-            with open(path, 'rb') as module_fd:
-                module_data = module_fd.read()
+            result = read_docstring(path)
 
-            result = extract_metadata(module_data=module_data)
-
-            metadata = result[0]
+            metadata = result['metadata']
+            doc = result['doc']
 
             if not metadata:
                 if module == 'async_wrapper':
@@ -112,6 +113,7 @@ def populate_modules():
                 namespace=namespace,
                 path=path.replace(BASE_PATH, ''),
                 supported_by=metadata['supported_by'],
+                version_added=str(doc.get('version_added', '')) if doc else '',
             ))
 
             for status in metadata['status']:
@@ -128,6 +130,7 @@ def populate_modules():
                 ('namespace', 'TEXT'),
                 ('path', 'TEXT'),
                 ('supported_by', 'TEXT'),
+                ('version_added', 'TEXT'),
             )),
         module_statuses=dict(
             rows=module_statuses_rows,
@@ -139,8 +142,8 @@ def populate_modules():
 
 
 def populate_coverage():
-    response = requests.get('https://codecov.io/api/gh/ansible/ansible/tree/devel/?src=extension')
-    data = response.json()
+    response = open_url('https://codecov.io/api/gh/ansible/ansible/tree/devel/?src=extension')
+    data = json.load(response)
     files = data['commit']['report']['files']
     coverage_rows = []
 

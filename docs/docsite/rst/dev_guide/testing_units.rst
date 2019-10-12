@@ -1,3 +1,7 @@
+:orphan:
+
+.. _testing_units:
+
 **********
 Unit Tests
 **********
@@ -39,6 +43,11 @@ Or against a specific Python version by doing:
 
    ansible-test units --tox --python 2.7 apt
 
+If you are running unit tests against things other than modules, such as module utilities, specify the whole file path:
+
+.. code:: shell
+
+   ansible-test units --tox test/units/module_utils/basic/test_imports.py
 
 For advanced usage see the online help::
 
@@ -67,10 +76,10 @@ install all the required dependencies needed for unit tests. For example:
    When using ``ansible-test`` with ``--tox`` requires tox >= 2.5.0
 
 
-The full list of requirements can be found at `test/runner/requirements
-<https://github.com/ansible/ansible/tree/devel/test/runner/requirements>`_. Requirements
+The full list of requirements can be found at `test/lib/ansible_test/_data/requirements
+<https://github.com/ansible/ansible/tree/devel/test/lib/ansible_test/_data/requirements>`_. Requirements
 files are named after their respective commands. See also the `constraints
-<https://github.com/ansible/ansible/blob/devel/test/runner/requirements/constraints.txt>`_
+<https://github.com/ansible/ansible/blob/devel/test/lib/ansible_test/_data/requirements/constraints.txt>`_
 applicable to all commands.
 
 
@@ -89,7 +98,7 @@ Structuring Unit Tests
 
 Ansible drives unit tests through `pytest <https://docs.pytest.org/en/latest/>`_. This
 means that tests can either be written a simple functions which are included in any file
-name like ``test_<something>.py`` or as classes. 
+name like ``test_<something>.py`` or as classes.
 
 Here is an example of a function::
 
@@ -100,23 +109,23 @@ Here is an example of a function::
       b = 23
       c = 33
       assert a + b = c
-    
+
 Here is an example of a class::
 
-  import unittest:
-      
+  import unittest
+
   class AddTester(unittest.TestCase)
-      
+
       def SetUp()
           self.a = 10
           self.b = 23
- 
-      # this function will 
+
+      # this function will
       def test_add()
         c = 33
         assert self.a + self.b = c
 
-     # this function will 
+     # this function will
       def test_subtract()
         c = -13
         assert self.a - self.b = c
@@ -125,9 +134,9 @@ Both methods work fine in most circumstances; the function-based interface is si
 quicker and so that's probably where you should start when you are just trying to add a
 few basic tests for a module.  The class-based test allows more tidy set up and tear down
 of pre-requisites, so if you have many test cases for your module you may want to refactor
-to use that.  
+to use that.
 
-Assertions using the simple ``assert`` function inside the tests will give give full
+Assertions using the simple ``assert`` function inside the tests will give full
 information on the cause of the failure with a trace-back of functions called during the
 assertion.  This means that plain asserts are recommended over other external assertion
 libraries.
@@ -169,7 +178,7 @@ If you are simulating APIs you may find that python placebo is useful.  See
 
 Code Coverage For New or Updated Unit Tests
 ```````````````````````````````````````````
-New code will be missing from the codecov.io coverage reports (see :doc:`testing`), so
+New code will be missing from the codecov.io coverage reports (see :ref:`developing_testing`), so
 local reporting is needed.  Most ``ansible-test`` commands allow you to collect code
 coverage; this is particularly useful when to indicate where to extend testing.
 
@@ -197,12 +206,11 @@ reports.
 
    :ref:`testing_units_modules`
        Special considerations for unit testing modules
-   :doc:`testing_running_locally`
+   :ref:`testing_running_locally`
        Running tests locally including gathering and reporting coverage data
    `Python 3 documentation - 26.4. unittest — Unit testing framework <https://docs.python.org/3/library/unittest.html>`_
-       The documentation of the unittest framework in python 3 
+       The documentation of the unittest framework in python 3
    `Python 2 documentation - 25.3. unittest — Unit testing framework <https://docs.python.org/3/library/unittest.html>`_
        The documentation of the earliest supported unittest framework - from Python 2.6
    `pytest: helps you write better programs <https://docs.pytest.org/en/latest/>`_
        The documentation of pytest - the framework actually used to run Ansible unit tests
-

@@ -1,4 +1,1 @@
-needs/ssh
-posix/ci/group3
-skip/freebsd
-skip/osx
+shippable/posix/group3

@@ -12,7 +12,7 @@ General Rules:
 
 Trademarks should be used on 1st references on a page or within a section.
 
-Use Ansible Tower® or Ansible®, on first reference when referring to products.
+Use Red Hat® Ansible Tower® or Ansible®, on first reference when referring to products.
  
 Use "Ansible" alone as the company name, as in "Ansible announced quarterly results," which is not marked.
 
@@ -20,13 +20,13 @@ Also add the trademark disclaimer.
 * When using Ansible trademarks in the body of written text, you should use the following credit line in a prominent place, usually a footnote.
 
     For Registered Trademarks:
-    - [Name of Trademark] is a registered trademark of Ansible, Inc. in the United States and other countries.
+    - [Name of Trademark] is a registered trademark of Red Hat, Inc. in the United States and other countries.
     
     For Unregistered Trademarks (TMs/SMs):
-    - [Name of Trademark] is a trademark of Ansible, Inc. in the United States and other countries.
+    - [Name of Trademark] is a trademark of Red Hat, Inc. in the United States and other countries.
 
     For registered and unregistered trademarks:
-    - [Name of Trademark] is a registered trademark and [Name of Trademark] is a trademark of Ansible, Inc. in the United States and other countries.
+    - [Name of Trademark] is a registered trademark and [Name of Trademark] is a trademark of Red Hat, Inc. in the United States and other countries.
 
 Guidelines for the proper use of trademarks:
 +++++++++++++++++++++++++++++++++++++++++++++
@@ -38,7 +38,7 @@ Always use proper trademark form and spelling.
 Never use a trademark as a noun. Always use a trademark as an adjective modifying the noun.
 
     Correct:
-    Ansible Tower® system performance is incredible.
+    Red Hat® Ansible Tower® system performance is incredible.
 
     Incorrect:
     Ansible's performance is incredible.
@@ -46,7 +46,7 @@ Never use a trademark as a noun. Always use a trademark as an adjective modifyin
 Never use a trademark as a verb. Trademarks are products or services, never actions.
 
     Correct:
-    "Orchestrate your entire network using Ansible Tower®."
+    "Orchestrate your entire network using Red Hat® Ansible Tower®."
     
     Incorrect:
     "Ansible your entire network."
@@ -54,7 +54,7 @@ Never use a trademark as a verb. Trademarks are products or services, never acti
 Never modify a trademark to a plural form. Instead, change the generic word from the singular to the plural.
 
     Correct:
-    "Corporate demand for Ansible Tower® configuration software is surging."
+    "Corporate demand for Red Hat® Ansible Tower® configuration software is surging."
 
     Incorrect:
     "Corporate demand for Ansible is surging."
@@ -89,8 +89,8 @@ Other Common Trademarks and Resource Sites:
 - UNIX® is a registered trademark of The Open Group.
 - Microsoft, Windows, Vista, XP, and NT are registered trademarks or trademarks of Microsoft Corporation in the United States and/or other countries. https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/en-us.aspx
 - Apple, Mac, Mac OS, Macintosh, Pages and TrueType are either registered trademarks or trademarks of Apple Computer, Inc. in the United States and/or other countries. https://www.apple.com/legal/intellectual-property/trademark/appletmlist.html
-- Adobe, Acrobat, GoLive, InDesign, Illustrator, PostScript , PhotoShop and the OpenType logo are either registered trademarks or trademarks of Adobe Systems Incorporated in the United States and/or other countries. http://www.adobe.com/legal/permissions/trademarks.html
-- Macromedia and Macromedia Flash are trademarks of Macromedia, Inc. http://www.adobe.com/legal/permissions/trademarks.html
+- Adobe, Acrobat, GoLive, InDesign, Illustrator, PostScript , PhotoShop and the OpenType logo are either registered trademarks or trademarks of Adobe Systems Incorporated in the United States and/or other countries. https://www.adobe.com/legal/permissions/trademarks.html
+- Macromedia and Macromedia Flash are trademarks of Macromedia, Inc. https://www.adobe.com/legal/permissions/trademarks.html
 - IBM is a registered trademark of International Business Machines Corporation. https://www.ibm.com/legal/us/en/copytrade.shtml
 - Celeron, Celeron Inside, Centrino, Centrino logo, Core Inside, Intel Core, Intel Inside, Intel Inside logo, Itanium, Itanium Inside, Pentium, Pentium Inside,VTune, Xeon, and Xeon Inside are trademarks or registered trademarks of Intel Corporation or its subsidiaries in the United States and other countries. https://www.intel.com/content/www/us/en/legal/trademarks.html
 

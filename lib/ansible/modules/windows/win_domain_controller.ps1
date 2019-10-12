@@ -1,5 +1,4 @@
 #!powershell
-# This file is part of Ansible
 
 # Copyright: (c) 2017, Red Hat, Inc.
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
@@ -24,7 +23,6 @@ Function Write-DebugLog {
     $msg = "$date_str $msg"
 
     Write-Debug $msg
-
     if($log_path) {
         Add-Content $log_path $msg
     }
@@ -42,15 +40,16 @@ Function Get-MissingFeatures {
     }
 
     $missing_features = @($features | Where-Object InstallState -ne Installed)
-    
+
     return ,$missing_features # no, the comma's not a typo- allows us to return an empty array
 }
 
 Function Ensure-FeatureInstallation {
     # ensure RSAT-ADDS and AD-Domain-Services features are installed
 
-    Write-DebugLog "Ensuring required Windows features are installed..." 
+    Write-DebugLog "Ensuring required Windows features are installed..."
     $feature_result = Install-WindowsFeature $required_features
+    $result.reboot_required = $feature_result.RestartNeeded
 
     If(-not $feature_result.Success) {
         Exit-Json -message ("Error installing AD-Domain-Services and RSAT-ADDS features: {0}" -f ($feature_result | Out-String))
@@ -61,7 +60,7 @@ Function Ensure-FeatureInstallation {
 Function Get-DomainControllerDomain {
     Write-DebugLog "Checking for domain controller role and domain name"
 
-    $sys_cim = Get-WmiObject Win32_ComputerSystem
+    $sys_cim = Get-CIMInstance Win32_ComputerSystem
 
     $is_dc = $sys_cim.DomainRole -in (4,5) # backup/primary DC
     # this will be our workgroup or joined-domain if we're not a DC
@@ -95,21 +94,22 @@ $result = @{
     reboot_required = $false
 }
 
-$param = Parse-Args -arguments $args -supports_check_mode $true
+$params = Parse-Args -arguments $args -supports_check_mode $true
 
-$dns_domain_name = Get-AnsibleParam $param "dns_domain_name"
-$safe_mode_password= Get-AnsibleParam $param "safe_mode_password"
-$domain_admin_user = Get-AnsibleParam $param "domain_admin_user" -failifempty $result
-$domain_admin_password= Get-AnsibleParam $param "domain_admin_password" -failifempty $result
-$local_admin_password= Get-AnsibleParam $param "local_admin_password"
-$database_path = Get-AnsibleParam $param "database_path" -type "path"
-$sysvol_path = Get-AnsibleParam $param "sysvol_path" -type "path"
-$read_only = Get-AnsibleParam $param "read_only" -type "bool" -default $false
-$site_name = Get-AnsibleParam $param "site_name" -type "str" -failifempty $read_only
+$dns_domain_name = Get-AnsibleParam -obj $params -name "dns_domain_name"
+$safe_mode_password= Get-AnsibleParam -obj $params -name "safe_mode_password"
+$domain_admin_user = Get-AnsibleParam -obj $params -name "domain_admin_user" -failifempty $result
+$domain_admin_password= Get-AnsibleParam -obj $params -name "domain_admin_password" -failifempty $result
+$local_admin_password= Get-AnsibleParam -obj $params -name "local_admin_password"
+$database_path = Get-AnsibleParam -obj $params -name "database_path" -type "path"
+$sysvol_path = Get-AnsibleParam -obj $params -name "sysvol_path" -type "path"
+$read_only = Get-AnsibleParam -obj $params -name "read_only" -type "bool" -default $false
+$site_name = Get-AnsibleParam -obj $params -name "site_name" -type "str" -failifempty $read_only
 
-$state = Get-AnsibleParam $param "state" -validateset ("domain_controller", "member_server") -failifempty $result
-$log_path = Get-AnsibleParam $param "log_path"
-$_ansible_check_mode = Get-AnsibleParam $param "_ansible_check_mode" -default $false
+$state = Get-AnsibleParam -obj $params -name "state" -validateset ("domain_controller", "member_server") -failifempty $result
+
+$log_path = Get-AnsibleParam -obj $params -name "log_path"
+$_ansible_check_mode = Get-AnsibleParam -obj $params -name "_ansible_check_mode" -default $false
 
 $global:log_path = $log_path
 
@@ -212,9 +212,35 @@ Try {
                 if ($site_name) {
                     $install_params.SiteName = $site_name
                 }
-                $install_result = Install-ADDSDomainController -NoRebootOnCompletion -Force @install_params
+                try
+                {
+                    $null = Install-ADDSDomainController -NoRebootOnCompletion -Force @install_params
+                } catch [Microsoft.DirectoryServices.Deployment.DCPromoExecutionException] {
+                    # ExitCode 15 == 'Role change is in progress or this computer needs to be restarted.'
+                    # DCPromo exit codes details can be found at https://docs.microsoft.com/en-us/windows-server/identity/ad-ds/deploy/troubleshooting-domain-controller-deployment
+                    if ($_.Exception.ExitCode -eq 15) {
+                        $result.reboot_required = $true
+                    } else {
+                        Fail-Json -obj $result -message "Failed to install ADDSDomainController with DCPromo: $($_.Exception.Message)"
+                    }
+                }
+                # If $_.FullyQualifiedErrorId -eq 'Test.VerifyUserCredentialPermissions.DCPromo.General.25,Microsoft.DirectoryServices.Deployment.PowerShell.Commands.InstallADDSDomainControllerCommand'
+                # the module failed to resolve the given dns domain name
 
-                Write-DebugLog "Installation completed, needs reboot..."
+                Write-DebugLog "Installation complete, trying to start the Netlogon service"
+                # The Netlogon service is set to auto start but is not started. This is
+                # required for Ansible to connect back to the host and reboot in a
+                # later task. Even if this fails Ansible can still connect but only
+                # with ansible_winrm_transport=basic so we just display a warning if
+                # this fails.
+                try {
+                    Start-Service -Name Netlogon
+                } catch {
+                    Write-DebugLog "Failed to start the Netlogon service: $($_.Exception.Message)"
+                    Add-Warning -obj $result -message "Failed to start the Netlogon service after promoting the host, Ansible may be unable to connect until the host is manually rebooting: $($_.Exception.Message)"
+                }
+
+                Write-DebugLog "Domain Controller setup completed, needs reboot..."
             }
         }
         member_server {
@@ -244,7 +270,7 @@ Try {
             $local_admin_secure = $local_admin_password | ConvertTo-SecureString -AsPlainText -Force
 
             Write-DebugLog "Uninstalling domain controller..."
-            $uninstall_result = Uninstall-ADDSDomainController -NoRebootOnCompletion -LocalAdministratorPassword $local_admin_secure -Credential $domain_admin_cred
+            Uninstall-ADDSDomainController -NoRebootOnCompletion -LocalAdministratorPassword $local_admin_secure -Credential $domain_admin_cred
             Write-DebugLog "Uninstallation complete, needs reboot..."
         }
         default { throw ("invalid state {0}" -f $state) }
@@ -259,4 +285,3 @@ Catch {
 
     Throw
 }
-

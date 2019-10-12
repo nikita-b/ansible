@@ -44,6 +44,13 @@ options:
         Prior to 1.9 the default was C(yes).
     type: bool
     default: "no"
+  in_place:
+    description:
+      - If the directory exists, then the working copy will be checked-out over-the-top using
+        svn checkout --force; if force is specified then existing files with different content are reverted
+    type: bool
+    default: "no"
+    version_added: "2.6"
   username:
     description:
       - C(--username) parameter passed to svn.
@@ -91,6 +98,7 @@ EXAMPLES = '''
   subversion:
     repo: svn+ssh://an.example.org/path/to/repo
     dest: /src/export
+    export: yes
 
 - name: Get information about the repository whether or not it has already been cloned locally
 - subversion:
@@ -130,6 +138,7 @@ class Subversion(object):
             bits.extend(["--password", self.password])
         bits.extend(args)
         rc, out, err = self.module.run_command(bits, check_rc)
+
         if check_rc:
             return out.splitlines()
         else:
@@ -140,9 +149,13 @@ class Subversion(object):
         rc = self._exec(["info", self.dest], check_rc=False)
         return rc == 0
 
-    def checkout(self):
+    def checkout(self, force=False):
         '''Creates new svn working directory if it does not already exist.'''
-        self._exec(["checkout", "-r", self.revision, self.repo, self.dest])
+        cmd = ["checkout"]
+        if force:
+            cmd.append("--force")
+        cmd.extend(["-r", self.revision, self.repo, self.dest])
+        self._exec(cmd)
 
     def export(self, force=False):
         '''Export svn repo to directory'''
@@ -156,15 +169,29 @@ class Subversion(object):
     def switch(self):
         '''Change working directory's repo.'''
         # switch to ensure we are pointing at correct repo.
-        self._exec(["switch", self.repo, self.dest])
+        # it also updates!
+        output = self._exec(["switch", "--revision", self.revision, self.repo, self.dest])
+        for line in output:
+            if re.search(r'^[ABDUCGE]\s', line):
+                return True
+        return False
 
     def update(self):
         '''Update existing svn working directory.'''
-        self._exec(["update", "-r", self.revision, self.dest])
+        output = self._exec(["update", "-r", self.revision, self.dest])
+
+        for line in output:
+            if re.search(r'^[ABDUCGE]\s', line):
+                return True
+        return False
 
     def revert(self):
         '''Revert svn working directory.'''
-        self._exec(["revert", "-R", self.dest])
+        output = self._exec(["revert", "-R", self.dest])
+        for line in output:
+            if re.search(r'^Reverted ', line) is None:
+                return True
+        return False
 
     def get_revision(self):
         '''Revision and URL of subversion working directory.'''
@@ -190,7 +217,7 @@ class Subversion(object):
 
     def needs_update(self):
         curr, url = self.get_revision()
-        out2 = '\n'.join(self._exec(["info", "-r", "HEAD", self.dest]))
+        out2 = '\n'.join(self._exec(["info", "-r", self.revision, self.dest]))
         head = re.search(r'^Revision:.*$', out2, re.MULTILINE).group(0)
         rev1 = int(curr.split(':')[1].strip())
         rev2 = int(head.split(':')[1].strip())
@@ -214,6 +241,7 @@ def main():
             checkout=dict(type='bool', default=True),
             update=dict(type='bool', default=True),
             switch=dict(type='bool', default=True),
+            in_place=dict(type='bool', default=False),
         ),
         supports_check_mode=True,
     )
@@ -229,6 +257,7 @@ def main():
     switch = module.params['switch']
     checkout = module.params['checkout']
     update = module.params['update']
+    in_place = module.params['in_place']
 
     # We screenscrape a huge amount of svn commands so use C locale anytime we
     # call run_command()
@@ -250,27 +279,39 @@ def main():
             module.exit_json(changed=False)
         if not export and checkout:
             svn.checkout()
+            files_changed = True
         else:
             svn.export(force=force)
+            files_changed = True
     elif svn.is_svn_repo():
         # Order matters. Need to get local mods before switch to avoid false
         # positives. Need to switch before revert to ensure we are reverting to
         # correct repo.
-        if module.check_mode or not update:
+        if not update:
+            module.exit_json(changed=False)
+        if module.check_mode:
             if svn.has_local_mods() and not force:
                 module.fail_json(msg="ERROR: modified files exist in the repository.")
             check, before, after = svn.needs_update()
             module.exit_json(changed=check, before=before, after=after)
+        files_changed = False
         before = svn.get_revision()
         local_mods = svn.has_local_mods()
         if switch:
-            svn.switch()
+            files_changed = svn.switch() or files_changed
         if local_mods:
             if force:
-                svn.revert()
+                files_changed = svn.revert() or files_changed
             else:
                 module.fail_json(msg="ERROR: modified files exist in the repository.")
-        svn.update()
+        files_changed = svn.update() or files_changed
+    elif in_place:
+        before = None
+        svn.checkout(force=True)
+        files_changed = True
+        local_mods = svn.has_local_mods()
+        if local_mods and force:
+            svn.revert()
     else:
         module.fail_json(msg="ERROR: %s folder already exists, but its not a subversion repository." % (dest,))
 
@@ -278,7 +319,7 @@ def main():
         module.exit_json(changed=True)
     else:
         after = svn.get_revision()
-        changed = before != after or local_mods
+        changed = files_changed or local_mods
         module.exit_json(changed=changed, before=before, after=after)
 
 

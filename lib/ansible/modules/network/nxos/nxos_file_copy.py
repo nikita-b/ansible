@@ -25,226 +25,167 @@ DOCUMENTATION = '''
 module: nxos_file_copy
 extends_documentation_fragment: nxos
 version_added: "2.2"
-short_description: Copy a file to a remote NXOS device over SCP.
+short_description: Copy a file to a remote NXOS device.
 description:
-  - Copy a file to the flash (or bootflash) remote network device
-    on NXOS devices.
+  - This module supports two different workflows for copying a file
+    to flash (or bootflash) on NXOS devices.  Files can either be (1) pushed
+    from the Ansible controller to the device or (2) pulled from a remote SCP
+    file server to the device.  File copies are initiated from the NXOS
+    device to the remote SCP server.  This module only supports the
+    use of connection C(network_cli) or C(Cli) transport with connection C(local).
 author:
   - Jason Edelman (@jedelman8)
   - Gabriele Gerbino (@GGabriele)
+  - Rewritten as a plugin by (@mikewiebe)
 notes:
-  - Tested against NXOSv 7.3.(0)D1(1) on VIRL
-  - The feature must be enabled with feature scp-server.
-  - If the file is already present (md5 sums match), no transfer will
-    take place.
+  - Tested against NXOS 7.0(3)I2(5), 7.0(3)I4(6), 7.0(3)I5(3),
+    7.0(3)I6(1), 7.0(3)I7(3), 6.0(2)A8(8), 7.0(3)F3(4), 7.3(0)D1(1),
+    8.3(0), 9.2, 9.3
+  - When pushing files (file_pull is False) to the NXOS device,
+    feature scp-server must be enabled.
+  - When pulling files (file_pull is True) to the NXOS device,
+    feature scp-server is not required.
+  - When pulling files (file_pull is True) to the NXOS device,
+    no transfer will take place if the file is already present.
   - Check mode will tell you if the file would be copied.
 requirements:
-  - paramiko
+  - paramiko (required when file_pull is False)
+  - SCPClient (required when file_pull is False)
+  - pexpect (required when file_pull is True)
 options:
   local_file:
     description:
-      - Path to local file. Local directory must exist.
-    required: true
+      - When (file_pull is False) this is the path to the local file on the Ansible controller.
+        The local directory must exist.
+      - When (file_pull is True) this is the target file name on the NXOS device.
   remote_file:
     description:
-      - Remote file path of the copy. Remote directories must exist.
+      - When (file_pull is False) this is the remote file path on the NXOS device.
         If omitted, the name of the local file will be used.
+        The remote directory must exist.
+      - When (file_pull is True) this is the full path to the file on the remote SCP
+        server to be copied to the NXOS device.
   file_system:
     description:
-      - The remote file system of the device. If omitted,
+      - The remote file system on the nxos device. If omitted,
         devices that support a I(file_system) parameter will use
         their default values.
+    default: "bootflash:"
   connect_ssh_port:
     description:
-      - SSH port to connect to server during transfer of file
+      - SSH server port used for file transfer.
     default: 22
     version_added: "2.5"
+  file_pull:
+    description:
+      - When (False) file is copied from the Ansible controller to the NXOS device.
+      - When (True) file is copied from a remote SCP server to the NXOS device.
+        In this mode, the file copy is initiated from the NXOS device.
+      - If the file is already present on the device it will be overwritten and
+        therefore the operation is NOT idempotent.
+    type: bool
+    default: False
+    version_added: "2.7"
+  file_pull_compact:
+    description:
+      - When file_pull is True, this is used to compact nxos image files.
+        This option can only be used with nxos image files.
+      - When (file_pull is False), this is not used.
+    type: bool
+    default: False
+    version_added: "2.9"
+  file_pull_kstack:
+    description:
+      - When file_pull is True, this can be used to speed up file copies when
+        the nxos running image supports the use-kstack option.
+      - When (file_pull is False), this is not used.
+    type: bool
+    default: False
+    version_added: "2.9"
+  local_file_directory:
+    description:
+      - When (file_pull is True) file is copied from a remote SCP server to the NXOS device,
+        and written to this directory on the NXOS device. If the directory does not exist, it
+        will be created under the file_system. This is an optional parameter.
+      - When (file_pull is False), this is not used.
+    version_added: "2.7"
+  file_pull_timeout:
+    description:
+      - Use this parameter to set timeout in seconds, when transferring
+        large files or when the network is slow.
+      - When (file_pull is False), this is not used.
+    default: 300
+    version_added: "2.7"
+  remote_scp_server:
+    description:
+      - The remote scp server address when file_pull is True.
+        This is required if file_pull is True.
+      - When (file_pull is False), this is not used.
+    version_added: "2.7"
+  remote_scp_server_user:
+    description:
+      - The remote scp server username when file_pull is True.
+        This is required if file_pull is True.
+      - When (file_pull is False), this is not used.
+    version_added: "2.7"
+  remote_scp_server_password:
+    description:
+      - The remote scp server password when file_pull is True.
+        This is required if file_pull is True.
+      - When (file_pull is False), this is not used.
+    version_added: "2.7"
+  vrf:
+    description:
+      - The VRF used to pull the file. Useful when no vrf management is defined
+    default: "management"
+    version_added: "2.9"
 '''
 
 EXAMPLES = '''
-- nxos_file_copy:
-    local_file: "./test_file.txt"
-    remote_file: "test_file.txt"
-    provider: "{{ cli }}"
-    connect_ssh_port: "{{ ansible_ssh_port }}"
+# File copy from ansible controller to nxos device
+  - name: "copy from server to device"
+    nxos_file_copy:
+      local_file: "./test_file.txt"
+      remote_file: "test_file.txt"
+
+# Initiate file copy from the nxos device to transfer file from an SCP server back to the nxos device
+  - name: "initiate file copy from device"
+    nxos_file_copy:
+      nxos_file_copy:
+      file_pull: True
+      local_file: "xyz"
+      local_file_directory: "dir1/dir2/dir3"
+      remote_file: "/mydir/abc"
+      remote_scp_server: "192.168.0.1"
+      remote_scp_server_user: "myUser"
+      remote_scp_server_password: "myPassword"
+      vrf: "management"
 '''
 
 RETURN = '''
 transfer_status:
-    description: Whether a file was transferred. "No Transfer" or "Sent".
+    description: Whether a file was transferred to the nxos device.
     returned: success
-    type: string
+    type: str
     sample: 'Sent'
 local_file:
     description: The path of the local file.
     returned: success
-    type: string
+    type: str
     sample: '/path/to/local/file'
 remote_file:
     description: The path of the remote file.
     returned: success
-    type: string
+    type: str
     sample: '/path/to/remote/file'
+remote_scp_server:
+    description: The name of the scp server when file_pull is True.
+    returned: success
+    type: str
+    sample: 'fileserver.example.com'
+changed:
+    description: Indicates whether or not the file was copied.
+    returned: success
+    type: bool
+    sample: true
 '''
-
-import os
-import re
-import time
-
-from ansible.module_utils.network.nxos.nxos import run_commands
-from ansible.module_utils.network.nxos.nxos import nxos_argument_spec, check_args
-from ansible.module_utils.basic import AnsibleModule
-
-try:
-    import paramiko
-    HAS_PARAMIKO = True
-except ImportError:
-    HAS_PARAMIKO = False
-
-try:
-    from scp import SCPClient
-    HAS_SCP = True
-except ImportError:
-    HAS_SCP = False
-
-
-def remote_file_exists(module, dst, file_system='bootflash:'):
-    command = 'dir {0}/{1}'.format(file_system, dst)
-    body = run_commands(module, {'command': command, 'output': 'text'})[0]
-    if 'No such file' in body:
-        return False
-    return True
-
-
-def verify_remote_file_exists(module, dst, file_system='bootflash:'):
-    command = 'dir {0}/{1}'.format(file_system, dst)
-    body = run_commands(module, {'command': command, 'output': 'text'})[0]
-    if 'No such file' in body:
-        return 0
-    return body.split()[0].strip()
-
-
-def local_file_exists(module):
-    return os.path.isfile(module.params['local_file'])
-
-
-def get_flash_size(module):
-    command = 'dir {0}'.format(module.params['file_system'])
-    body = run_commands(module, {'command': command, 'output': 'text'})[0]
-
-    match = re.search(r'(\d+) bytes free', body)
-    bytes_free = match.group(1)
-
-    return int(bytes_free)
-
-
-def enough_space(module):
-    flash_size = get_flash_size(module)
-    file_size = os.path.getsize(module.params['local_file'])
-    if file_size > flash_size:
-        return False
-
-    return True
-
-
-def transfer_file(module, dest):
-    file_size = os.path.getsize(module.params['local_file'])
-
-    if not enough_space(module):
-        module.fail_json(msg='Could not transfer file. Not enough space on device.')
-
-    provider = module.params['provider']
-
-    hostname = module.params.get('host') or provider.get('host')
-    username = module.params.get('username') or provider.get('username')
-    password = module.params.get('password') or provider.get('password')
-    port = module.params.get('connect_ssh_port')
-
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(
-        hostname=hostname,
-        username=username,
-        password=password,
-        port=port)
-
-    full_remote_path = '{0}{1}'.format(module.params['file_system'], dest)
-    scp = SCPClient(ssh.get_transport())
-    try:
-        scp.put(module.params['local_file'], full_remote_path)
-    except:
-        time.sleep(10)
-        temp_size = verify_remote_file_exists(
-            module, dest, file_system=module.params['file_system'])
-        if int(temp_size) == int(file_size):
-            pass
-        else:
-            module.fail_json(msg='Could not transfer file. There was an error '
-                             'during transfer. Please make sure remote '
-                             'permissions are set.', temp_size=temp_size,
-                             file_size=file_size)
-    scp.close()
-    ssh.close()
-    return True
-
-
-def main():
-    argument_spec = dict(
-        local_file=dict(required=True),
-        remote_file=dict(required=False),
-        file_system=dict(required=False, default='bootflash:'),
-        connect_ssh_port=dict(required=False, type='int', default=22),
-    )
-
-    argument_spec.update(nxos_argument_spec)
-
-    module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
-
-    if not HAS_PARAMIKO:
-        module.fail_json(
-            msg='library paramiko is required but does not appear to be '
-                'installed. It can be installed using `pip install paramiko`'
-        )
-
-    if not HAS_SCP:
-        module.fail_json(
-            msg='library scp is required but does not appear to be '
-                'installed. It can be installed using `pip install scp`'
-        )
-
-    warnings = list()
-    check_args(module, warnings)
-    results = dict(changed=False, warnings=warnings)
-
-    local_file = module.params['local_file']
-    remote_file = module.params['remote_file']
-    file_system = module.params['file_system']
-
-    results['transfer_status'] = 'No Transfer'
-    results['local_file'] = local_file
-    results['file_system'] = file_system
-
-    if not local_file_exists(module):
-        module.fail_json(msg="Local file {0} not found".format(local_file))
-
-    dest = remote_file or os.path.basename(local_file)
-    remote_exists = remote_file_exists(module, dest, file_system=file_system)
-
-    if not remote_exists:
-        results['changed'] = True
-        file_exists = False
-    else:
-        file_exists = True
-
-    if not module.check_mode and not file_exists:
-        transfer_file(module, dest)
-        results['transfer_status'] = 'Sent'
-
-    if remote_file is None:
-        remote_file = os.path.basename(local_file)
-    results['remote_file'] = remote_file
-
-    module.exit_json(**results)
-
-if __name__ == '__main__':
-    main()

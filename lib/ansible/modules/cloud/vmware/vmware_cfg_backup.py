@@ -24,7 +24,7 @@ author:
 notes:
     - Tested on ESXi 6.0
     - Works only for ESXi hosts
-    - For configuration save or reset, the host will be switched automatically to maintenance mode.
+    - For configuration load or reset, the host will be switched automatically to maintenance mode.
 requirements:
     - "python >= 2.6"
     - PyVmomi installed
@@ -33,57 +33,59 @@ options:
         description:
             - Name of ESXi server. This is required only if authentication against a vCenter is done.
         required: False
+        type: str
     dest:
         description:
             - The destination where the ESXi configuration bundle will be saved. The I(dest) can be a folder or a file.
             - If I(dest) is a folder, the backup file will be saved in the folder with the default filename generated from the ESXi server.
             - If I(dest) is a file, the backup file will be saved with that filename. The file extension will always be .tgz.
+        type: path
     src:
         description:
             - The file containing the ESXi configuration that will be restored.
+        type: path
     state:
         description:
             - If C(saved), the .tgz backup bundle will be saved in I(dest).
             - If C(absent), the host configuration will be reset to default values.
             - If C(loaded), the backup file in I(src) will be loaded to the ESXi host rewriting the hosts settings.
         choices: [saved, absent, loaded]
+        type: str
 extends_documentation_fragment: vmware.documentation
 '''
 
 EXAMPLES = '''
-# save the ESXi configuration locally by authenticating directly against the ESXi host
-- name: ESXI backup test
-  local_action:
-      module: vmware_cfg_backup
-      hostname: esxi_hostname
-      username: user
-      password: pass
-      state: saved
-      dest: /tmp/
+- name: Save the ESXi configuration locally by authenticating directly against the ESXi host
+  vmware_cfg_backup:
+    hostname: '{{ esxi_hostname }}'
+    username: '{{ esxi_username }}'
+    password: '{{ esxi_password }}'
+    state: saved
+    dest: /tmp/
+  delegate_to: localhost
 
-# save the ESXi configuration locally by authenticating against the vCenter and selecting the ESXi host
-- name: ESXI backup test
-  local_action:
-      module: vmware_cfg_backup
-      hostname: vCenter
-      esxi_hostname: esxi_hostname
-      username: user
-      password: pass
-      state: saved
-      dest: /tmp/
+- name: Save the ESXi configuration locally by authenticating against the vCenter and selecting the ESXi host
+  vmware_cfg_backup:
+    hostname: '{{ vcenter_hostname }}'
+    esxi_hostname: '{{ esxi_hostname }}'
+    username: '{{ esxi_username }}'
+    password: '{{ esxi_password }}'
+    state: saved
+    dest: /tmp/
+  delegate_to: localhost
 '''
 
 RETURN = '''
 dest_file:
     description: The full path of where the file holding the ESXi configurations was stored
     returned: changed
-    type: string
+    type: str
     sample: /tmp/configBundle-esxi.host.domain.tgz
 '''
 
 import os
 try:
-    from pyVmomi import vim, vmodl
+    from pyVmomi import vim
 except ImportError:
     pass
 
@@ -116,7 +118,7 @@ class VMwareConfigurationBackup(PyVmomi):
                 self.module.fail_json(msg="Failed to find ESXi %s" % self.esxi_hostname)
 
         host_system = get_all_objs(self.content, [vim.HostSystem])
-        return host_system.keys()[0]
+        return list(host_system)[0]
 
     def process_state(self):
         if self.state == 'saved':
@@ -130,7 +132,7 @@ class VMwareConfigurationBackup(PyVmomi):
 
     def load_configuration(self):
         if not os.path.isfile(self.src):
-            self.module.fail_json(msg="Source file {} does not exist".format(self.src))
+            self.module.fail_json(msg="Source file {0} does not exist".format(self.src))
 
         url = self.host.configManager.firmwareSystem.QueryFirmwareConfigUploadURL()
         url = url.replace('*', self.host.name)

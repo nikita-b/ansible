@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 set -euvx
+source virtualenv.sh
+
 
 MYTMPDIR=$(mktemp -d 2>/dev/null || mktemp -d -t 'mytmpdir')
 trap 'rm -rf "${MYTMPDIR}"' EXIT
@@ -35,7 +37,7 @@ echo "This is a test file for edit3" > "${TEST_FILE_EDIT3}"
 # ansible-config view
 ansible-config view
 
-# ansisle-config
+# ansible-config
 ansible-config dump --only-changed
 ansible-vault encrypt "$@" --vault-id vault-password "${TEST_FILE_EDIT3}"
 # EDITOR=./faux-editor.py ansible-vault edit "$@" "${TEST_FILE_EDIT3}"
@@ -70,58 +72,41 @@ ansible-vault view "$@" --vault-id some_unknown_vault_id@test-vault-client.py fo
 # Use linux setsid to test without a tty. No setsid if osx/bsd though...
 if [ -x "$(command -v setsid)" ]; then
     # tests related to https://github.com/ansible/ansible/issues/30993
-    CMD='ansible-playbook -vvvvv --ask-vault-pass test_vault.yml'
+    CMD='ansible-playbook -i ../../inventory -vvvvv --ask-vault-pass test_vault.yml'
     setsid sh -c "echo test-vault-password|${CMD}" < /dev/null > log 2>&1 && :
     WRONG_RC=$?
     cat log
     echo "rc was $WRONG_RC (0 is expected)"
     [ $WRONG_RC -eq 0 ]
 
-    setsid sh -c 'tty; ansible-vault --ask-vault-pass -vvvvv view test_vault.yml' < /dev/null > log 2>&1 && :
+    setsid sh -c 'tty; ansible-vault view --ask-vault-pass -vvvvv test_vault.yml' < /dev/null > log 2>&1 && :
     WRONG_RC=$?
     echo "rc was $WRONG_RC (1 is expected)"
     [ $WRONG_RC -eq 1 ]
     cat log
 
-    setsid sh -c 'tty; echo passbhkjhword|ansible-playbook -vvvvv --ask-vault-pass test_vault.yml' < /dev/null > log 2>&1 && :
+    setsid sh -c 'tty; echo passbhkjhword|ansible-playbook -i ../../inventory -vvvvv --ask-vault-pass test_vault.yml' < /dev/null > log 2>&1 && :
     WRONG_RC=$?
     echo "rc was $WRONG_RC (1 is expected)"
     [ $WRONG_RC -eq 1 ]
     cat log
 
-    setsid sh -c 'tty; echo test-vault-password |ansible-playbook -vvvvv --ask-vault-pass test_vault.yml' < /dev/null > log 2>&1
+    setsid sh -c 'tty; echo test-vault-password |ansible-playbook -i ../../inventory -vvvvv --ask-vault-pass test_vault.yml' < /dev/null > log 2>&1
     echo $?
     cat log
 
-    setsid sh -c 'tty; echo test-vault-password|ansible-playbook -vvvvv --ask-vault-pass test_vault.yml' < /dev/null > log 2>&1
+    setsid sh -c 'tty; echo test-vault-password|ansible-playbook -i ../../inventory -vvvvv --ask-vault-pass test_vault.yml' < /dev/null > log 2>&1
     echo $?
     cat log
 
-    setsid sh -c 'tty; echo test-vault-password |ansible-playbook -vvvvv --ask-vault-pass test_vault.yml' < /dev/null > log 2>&1
+    setsid sh -c 'tty; echo test-vault-password |ansible-playbook -i ../../inventory -vvvvv --ask-vault-pass test_vault.yml' < /dev/null > log 2>&1
     echo $?
     cat log
 
-    setsid sh -c 'tty; echo test-vault-password|ansible-vault --ask-vault-pass -vvvvv view vaulted.inventory' < /dev/null > log 2>&1
+    setsid sh -c 'tty; echo test-vault-password|ansible-vault view --ask-vault-pass -vvvvv vaulted.inventory' < /dev/null > log 2>&1
     echo $?
     cat log
 fi
-
-# old format
-ansible-vault view "$@" --vault-password-file vault-password-ansible format_1_0_AES.yml
-
-ansible-vault view "$@" --vault-password-file vault-password-ansible format_1_1_AES.yml
-
-# old format, wrong password
-echo "The wrong password tests are expected to return 1"
-ansible-vault view "$@" --vault-password-file vault-password-wrong format_1_0_AES.yml && :
-WRONG_RC=$?
-echo "rc was $WRONG_RC (1 is expected)"
-[ $WRONG_RC -eq 1 ]
-
-ansible-vault view "$@" --vault-password-file vault-password-wrong format_1_1_AES.yml && :
-WRONG_RC=$?
-echo "rc was $WRONG_RC (1 is expected)"
-[ $WRONG_RC -eq 1 ]
 
 ansible-vault view "$@" --vault-password-file vault-password-wrong format_1_1_AES256.yml && :
 WRONG_RC=$?
@@ -283,6 +268,9 @@ echo "rc was $WRONG_RC (2 is expected)"
 
 ansible-vault view "$@" --vault-password-file "${NEW_VAULT_PASSWORD}" "${TEST_FILE}"
 
+# view file with unicode in filename
+ansible-vault view "$@" --vault-password-file vault-password vault-café.yml
+
 # view with old password file and new password file
 ansible-vault view "$@" --vault-password-file "${NEW_VAULT_PASSWORD}" --vault-password-file vault-password "${TEST_FILE}"
 
@@ -328,6 +316,10 @@ echo "rc was $WRONG_RC (1 is expected)"
 
 
 ansible-vault encrypt_string "$@" --vault-password-file "${NEW_VAULT_PASSWORD}" "a test string"
+
+# Test with multiple vault password files
+# https://github.com/ansible/ansible/issues/57172
+env ANSIBLE_VAULT_PASSWORD_FILE=vault-password ansible-vault encrypt_string "$@" --vault-password-file "${NEW_VAULT_PASSWORD}" --encrypt-vault-id default "a test string"
 
 ansible-vault encrypt_string "$@" --vault-password-file "${NEW_VAULT_PASSWORD}" --name "blippy" "a test string names blippy"
 
@@ -386,7 +378,7 @@ echo "rc was $WRONG_RC (5 is expected)"
 
 # encrypt with a password from a vault encrypted password file and multiple vault-ids
 # but this time specify with --encrypt-vault-id, but specifying vault-id names (instead of default)
-# ansible-vault encrypt "$@" --vault-id from_vault_password@vault-password --vault-id from_encrypted_vault_password@encrypted-vault-password --encrypt-vault-id from_encrypted_vault_password "${TEST_FILE_ENC_PASSWORD}"
+# ansible-vault encrypt "$@" --vault-id from_vault_password@vault-password --vault-id from_encrypted_vault_password@encrypted-vault-password --encrypt-vault-id from_encrypted_vault_password "${TEST_FILE(_ENC_PASSWORD}"
 
 # try to view the file encrypted with the vault-password we didnt specify
 # to verify we didnt choose the wrong vault-id
@@ -417,6 +409,17 @@ ansible-playbook test_vault_embedded.yml -i ../../inventory -v "$@" --vault-pass
 ansible-playbook test_vault_embedded.yml -i ../../inventory -v "$@" --vault-password-file vault-password
 ansible-playbook test_vaulted_inventory.yml -i vaulted.inventory -v "$@" --vault-password-file vault-password
 ansible-playbook test_vaulted_template.yml -i ../../inventory -v "$@" --vault-password-file vault-password
+
+
+# install TOML for parse toml inventory
+# test playbooks using vaulted files(toml)
+pip install toml
+ansible-vault encrypt  ./inventory.toml -v "$@" --vault-password-file=./vault-password
+ansible-playbook test_vaulted_inventory_toml.yml -i ./inventory.toml -v "$@" --vault-password-file vault-password
+ansible-vault decrypt  ./inventory.toml -v "$@" --vault-password-file=./vault-password
+
+# test a playbook with a host_var whose value is non-ascii utf8 (see https://github.com/ansible/ansible/issues/37258)
+ansible-playbook -i ../../inventory -v "$@" --vault-id vault-password test_vaulted_utf8_value.yml
 
 # test with password from password script
 ansible-playbook test_vault.yml          -i ../../inventory -v "$@" --vault-password-file password-script.py
@@ -501,3 +504,6 @@ ansible-playbook "$@" -i invalid_format/inventory --vault-id invalid_format/vaul
 
 EXPECTED_ERROR='Vault format unhexlify error: Odd-length string'
 ansible-playbook "$@" -i invalid_format/inventory --vault-id invalid_format/vault-secret invalid_format/broken-group-vars-tasks.yml 2>&1 | grep "${EXPECTED_ERROR}"
+
+# Run playbook with vault file with unicode in filename (https://github.com/ansible/ansible/issues/50316)
+ansible-playbook -i ../../inventory -v "$@" --vault-password-file vault-password test_utf8_value_in_filename.yml

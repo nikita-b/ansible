@@ -3,18 +3,30 @@
 - debug: msg="Using provider={{ connection.transport }}"
   when: ansible_connection == "local"
 
-- name: "Enable feature OSPF"
+- set_fact: def_met_default="default"
+  # CSCvi74876 Cannot remove default-metric
+  when: imagetag is not search("I7")
+
+- name: "Setup: disable features for initial cleanup"
   nxos_feature:
-    feature: ospf
-    state: enabled
+    feature: "{{ item }}"
     provider: "{{ connection }}"
+    state: disabled
+  loop: ['ospf', 'bfd']
   ignore_errors: yes
+
+- name: "Enable features"
+  nxos_feature:
+    feature: "{{ item }}"
+    provider: "{{ connection }}"
+    state: enabled
+  loop: ['ospf', 'bfd']
 
 - block:
   - name: Configure ospf vrf
     nxos_ospf_vrf: &config
       ospf: 1
-      router_id: 1.1.1.1
+      router_id: 192.0.2.1
       timer_throttle_spf_start: 50
       timer_throttle_spf_hold: 1000
       timer_throttle_spf_max: 2000
@@ -22,9 +34,10 @@
       timer_throttle_lsa_hold: 1100
       timer_throttle_lsa_max: 3000
       vrf: test
+      bfd: enable
       passive_interface: true
-      state: present
       provider: "{{ connection }}"
+      state: present
     register: result
 
   - assert: &true
@@ -44,13 +57,15 @@
       ospf: 2
       auto_cost: 5000
       timer_throttle_spf_hold: 1100
+      timer_throttle_lsa_hold: 2220
       timer_throttle_lsa_max: 2222
       default_metric: 1000
       log_adjacency: log
       vrf: default
+      bfd: disable
       passive_interface: true
-      state: present
       provider: "{{ connection }}"
+      state: present
     register: result
 
   - assert: *true
@@ -65,13 +80,13 @@
     nxos_ospf_vrf: &config2
       ospf: 2
       auto_cost: default
-      default_metric: default
+      default_metric: "{{def_met_default|default(omit)}}"
       log_adjacency: default
       timer_throttle_spf_hold: default
       passive_interface: false
       vrf: default
-      state: present
       provider: "{{ connection }}"
+      state: present
     register: result
 
   - assert: *true
@@ -86,8 +101,8 @@
     nxos_ospf_vrf: &unconfig1
       ospf: 2
       vrf: default
-      state: absent
       provider: "{{ connection }}"
+      state: absent
     register: result
 
   - assert: *true
@@ -97,13 +112,14 @@
     register: result
 
   - assert: *false
+    when: def_met_default is defined
 
   - name: Unconfigure ospf vrf
     nxos_ospf_vrf: &unconfig
       ospf: 1
       vrf: test
-      state: absent
       provider: "{{ connection }}"
+      state: absent
     register: result
 
   - assert: *true
@@ -113,13 +129,15 @@
     register: result
 
   - assert: *false
+    when: def_met_default is defined
 
   always:
-  - name: "Disable feature OSPF"
+  - name: "Disable features"
     nxos_feature:
-      feature: ospf
-      state: disabled
+      feature: "{{ item }}"
       provider: "{{ connection }}"
+      state: disabled
+    loop: ['ospf', 'bfd']
     ignore_errors: yes
 
 - debug: msg="END connection={{ ansible_connection }} nxos_ospf_vrf sanity test"

@@ -34,32 +34,34 @@ options:
       description:
       - The name of the datacenter the cluster will be created in.
       required: True
+      type: str
     state:
       description:
       - If the datacenter should be present or absent.
       choices: [ present, absent ]
       default: present
+      type: str
 extends_documentation_fragment: vmware.documentation
 '''
 
 EXAMPLES = '''
-# Example vmware_datacenter command from Ansible Playbooks
 - name: Create Datacenter
-  local_action:
-    module: vmware_datacenter
-    hostname: "{{ ansible_ssh_host }}"
-    username: root
-    password: vmware
-    datacenter_name: "datacenter"
+  vmware_datacenter:
+    hostname: '{{ vcenter_hostname }}'
+    username: '{{ vcenter_username }}'
+    password: '{{ vcenter_password }}'
+    datacenter_name: '{{ datacenter_name }}'
     state: present
+  delegate_to: localhost
 
 - name: Delete Datacenter
   vmware_datacenter:
-    hostname: vcenter_hostname
-    username: root
-    password: pass
-    datacenter_name: DC2
+    hostname: '{{ vcenter_hostname }}'
+    username: '{{ vcenter_username }}'
+    password: '{{ vcenter_password }}'
+    datacenter_name: '{{ datacenter_name }}'
     state: absent
+  delegate_to: localhost
   register: datacenter_delete_result
 '''
 

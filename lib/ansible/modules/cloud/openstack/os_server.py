@@ -27,7 +27,8 @@ description:
 options:
    name:
      description:
-        - Name that has to be given to the instance
+        - Name that has to be given to the instance. It is also possible to
+          specify the ID of the instance instead of its name if I(state) is I(absent).
      required: true
    image:
      description:
@@ -75,6 +76,12 @@ options:
         - 'Also this accepts a string containing a list of (net/port)-(id/name)
           Eg: nics: "net-id=uuid-1,port-name=myport"
           Only one of network or nics should be supplied.'
+     suboptions:
+       tag:
+         description:
+            - 'A "tag" for the specific port to be passed via metadata.
+              Eg: tag: test_tag'
+         version_added: '2.10'
    auto_ip:
      description:
         - Ensure instance has public ip however the cloud wants to do that
@@ -113,7 +120,7 @@ options:
    boot_from_volume:
      description:
         - Should the instance boot from a persistent volume created based on
-          the image given. Mututally exclusive with boot_volume.
+          the image given. Mutually exclusive with boot_volume.
      type: bool
      default: 'no'
    volume_size:
@@ -166,8 +173,8 @@ options:
      description:
        - Availability zone in which to create the server.
 requirements:
-    - "python >= 2.6"
-    - "shade"
+    - "python >= 2.7"
+    - "openstacksdk"
 '''
 
 EXAMPLES = '''
@@ -381,6 +388,47 @@ EXAMPLES = '''
           ifdown eth0 && ifup eth0
           {% endraw %}
 
+# Create a new instance with server group for (anti-)affinity
+# server group ID is returned from os_server_group module.
+- name: launch a compute instance
+  hosts: localhost
+  tasks:
+    - name: launch an instance
+      os_server:
+        state: present
+        name: vm1
+        image: 4f905f38-e52a-43d2-b6ec-754a13ffb529
+        flavor: 4
+        scheduler_hints:
+          group: f5c8c61a-9230-400a-8ed2-3b023c190a7f
+
+# Create an instance with "tags" for the nic
+- name: Create instance with nics "tags"
+  os_server:
+    state: present
+    auth:
+        auth_url: https://identity.example.com
+        username: admin
+        password: admin
+        project_name: admin
+    name: vm1
+    image: 4f905f38-e52a-43d2-b6ec-754a13ffb529
+    key_name: ansible_key
+    flavor: 4
+    nics:
+      - port-name: net1_port1
+        tag: test_tag
+      - net-name: another_network
+
+# Deletes an instance via its ID
+- name: remove an instance
+  hosts: localhost
+  tasks:
+    - name: remove an instance
+      os_server:
+        name: abcdef01-2345-6789-0abc-def0123456789
+        state: absent
+
 '''
 
 from ansible.module_utils.basic import AnsibleModule
@@ -411,7 +459,7 @@ def _network_args(module, cloud):
     if not isinstance(nics, list):
         module.fail_json(msg='The \'nics\' parameter must be a list.')
 
-    for net in _parse_nics(nics):
+    for num, net in enumerate(_parse_nics(nics)):
         if not isinstance(net, dict):
             module.fail_json(
                 msg='Each entry in the \'nics\' parameter must be a dict.')
@@ -424,7 +472,10 @@ def _network_args(module, cloud):
                 module.fail_json(
                     msg='Could not find network by net-name: %s' %
                     net['net-name'])
-            args.append({'net-id': by_name['id']})
+            resolved_net = net.copy()
+            del resolved_net['net-name']
+            resolved_net['net-id'] = by_name['id']
+            args.append(resolved_net)
         elif net.get('port-id'):
             args.append(net)
         elif net.get('port-name'):
@@ -433,7 +484,13 @@ def _network_args(module, cloud):
                 module.fail_json(
                     msg='Could not find port by port-name: %s' %
                     net['port-name'])
-            args.append({'port-id': by_name['id']})
+            resolved_net = net.copy()
+            del resolved_net['port-name']
+            resolved_net['port-id'] = by_name['id']
+            args.append(resolved_net)
+
+        if 'tag' in net:
+            args[num]['tag'] = net['tag']
     return args
 
 
@@ -538,10 +595,12 @@ def _update_server(module, cloud, server):
     return (changed, server)
 
 
-def _delete_floating_ip_list(cloud, server, extra_ips):
+def _detach_ip_list(cloud, server, extra_ips):
     for ip in extra_ips:
-        cloud.nova_client.servers.remove_floating_ip(
-            server=server.id, address=ip)
+        ip_id = cloud.get_floating_ip(
+            id=None, filters={'floating_ip_address': ip})
+        cloud.detach_ip_from_server(
+            server_id=server.id, floating_ip_id=ip_id)
 
 
 def _check_ips(module, cloud, server):
@@ -582,7 +641,7 @@ def _check_ips(module, cloud, server):
                 if ip not in floating_ips:
                     extra_ips.append(ip)
             if extra_ips:
-                _delete_floating_ip_list(cloud, server, extra_ips)
+                _detach_ip_list(cloud, server, extra_ips)
                 changed = True
     elif auto_ip:
         if server['interface_ip']:
@@ -613,11 +672,7 @@ def _check_security_groups(module, cloud, server):
         return changed, server
 
     module_security_groups = set(module.params['security_groups'])
-    # Workaround a bug in shade <= 1.20.0
-    if server.security_groups is not None:
-        server_security_groups = set(sg.name for sg in server.security_groups)
-    else:
-        server_security_groups = set()
+    server_security_groups = set(sg['name'] for sg in server.security_groups)
 
     add_sgs = module_security_groups - server_security_groups
     remove_sgs = server_security_groups - module_security_groups
@@ -715,7 +770,7 @@ def main():
                     "if state == 'present'"
             )
 
-    shade, cloud = openstack_cloud_from_module(module)
+    sdk, cloud = openstack_cloud_from_module(module)
     try:
         if state == 'present':
             _get_server_state(module, cloud)
@@ -723,7 +778,7 @@ def main():
         elif state == 'absent':
             _get_server_state(module, cloud)
             _delete_server(module, cloud)
-    except shade.OpenStackCloudException as e:
+    except sdk.exceptions.OpenStackCloudException as e:
         module.fail_json(msg=str(e), extra_data=e.extra_data)
 
 

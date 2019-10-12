@@ -34,7 +34,8 @@ description:
     devices running VyOS. It allows playbooks to add or remote
     banner text from the active running configuration.
 notes:
-  - Tested against VYOS 1.1.7
+  - Tested against VyOS 1.1.8 (helium).
+  - This module works with connection C(network_cli). See L(the VyOS OS Platform Options,../network/user_guide/platform_vyos.html).
 options:
   banner:
     description:
@@ -172,6 +173,7 @@ def main():
         result['changed'] = True
 
     module.exit_json(**result)
+
 
 if __name__ == '__main__':
     main()

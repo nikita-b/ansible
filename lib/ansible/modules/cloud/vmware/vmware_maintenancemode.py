@@ -24,7 +24,7 @@ description:
     - Support for VSAN compliant maintenance mode when selected.
 author:
 - Jay Jahns (@jjahns) <jjahns@vmware.com>
-- Abhijeet Kasurde (@akasurde)
+- Abhijeet Kasurde (@Akasurde)
 version_added: "2.1"
 notes:
     - Tested on vSphere 5.5, 6.0 and 6.5
@@ -36,6 +36,7 @@ options:
         description:
             - Name of the host as defined in vCenter.
         required: True
+        type: str
     vsan:
         description:
             - Specify which VSAN compliant mode to enter.
@@ -45,6 +46,7 @@ options:
             - 'noAction'
         required: False
         aliases: [ 'vsan_mode' ]
+        type: str
     evacuate:
         description:
             - If set to C(True), evacuate all powered off VMs.
@@ -56,6 +58,7 @@ options:
             - Specify a timeout for the operation.
         required: False
         default: 0
+        type: int
     state:
         description:
             - Enter or exit maintenance mode.
@@ -64,37 +67,39 @@ options:
             - absent
         default: present
         required: False
+        type: str
 extends_documentation_fragment: vmware.documentation
 '''
 
 EXAMPLES = '''
 - name: Enter VSAN-Compliant Maintenance Mode
   vmware_maintenancemode:
-    hostname: vc_host
-    username: vc_user
-    password: vc_pass
-    esxi_hostname: esxi.host.example
+    hostname: "{{ vcenter_hostname }}"
+    username: "{{ vcenter_username }}"
+    password: "{{ vcenter_password }}"
+    esxi_hostname: "{{ esxi_hostname }}"
     vsan: ensureObjectAccessibility
     evacuate: yes
     timeout: 3600
     state: present
+  delegate_to: localhost
 '''
 
 RETURN = '''
 hostsystem:
     description: Name of vim reference
     returned: always
-    type: string
+    type: str
     sample: "'vim.HostSystem:host-236'"
 hostname:
     description: Name of host in vCenter
     returned: always
-    type: string
+    type: str
     sample: "esxi.local.domain"
 status:
     description: Action taken
     returned: always
-    type: string
+    type: str
     sample: "ENTER"
 '''
 

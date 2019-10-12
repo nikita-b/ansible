@@ -1,108 +1,221 @@
-%define name ansible
-%define ansible_version $VERSION
+%define release_date %(date "+%a %b %e %Y")
 
-%if 0%{?rhel} == 5
-%define __python2 /usr/bin/python26
+# Disable shebang munging for specific paths.  These files are data files.
+# ansible-test munges the shebangs itself.
+%global __brp_mangle_shebangs_exclude_from /usr/lib/python[0-9]+\.[0-9]+/site-packages/ansible_test/_data/.*
+
+# RHEL and Fedora add -s to the shebang line.  We do *not* use -s -E -S or -I
+# with ansible because it has many optional features which users need to
+# install libraries on their own to use.  For instance, paramiko for the
+# network connection plugins or winrm to talk to windows hosts.
+# Set this to nil to remove -s
+%define py_shbang_opts %{nil}
+%define py2_shbang_opts %{nil}
+%define py3_shbang_opts %{nil}
+
+
+%if 0%{?fedora} || 0%{?rhel} >= 8
+%global with_python2 0
+%global with_python3 1
+%else
+%global with_python2 1
+%global with_python3 0
 %endif
 
-Name:      %{name}
-Version:   %{ansible_version}
-Release:   1%{?dist}
-Url:       https://www.ansible.com
-Summary:   SSH-based application deployment, configuration management, and IT orchestration platform
-License:   GPLv3+
-Group:     Development/Libraries
-Source:    https://releases.ansible.com/ansible/%{name}-%{version}.tar.gz
-BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-buildroot
-%{!?__python2: %global __python2 /usr/bin/python2.6}
-%{!?python_sitelib: %global python_sitelib %(%{__python2} -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")}
+Name: ansible
+Summary: SSH-based configuration management, deployment, and task execution system
+Version: %{rpmversion}
+Release: %{rpmrelease}%{?dist}%{?repotag}
 
+Group: Development/Libraries
+License: GPLv3+
+Source0: https://releases.ansible.com/ansible/%{name}-%{upstream_version}.tar.gz
+
+Url: http://ansible.com
 BuildArch: noarch
 
-# RHEL <=5
-%if 0%{?rhel} && 0%{?rhel} <= 5
-BuildRequires: python26-devel
-BuildRequires: python26-setuptools
-Requires: python26-PyYAML
-Requires: python26-paramiko
-Requires: python26-jinja2
-Requires: python26-keyczar
-Requires: python26-httplib2
-Requires: python26-setuptools
-Requires: python26-six
-%endif
+BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-buildroot
+%{!?python2_sitelib: %global python_sitelib %(%{__python2} -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")}
+%{!?python3_sitelib: %global python_sitelib %(%{__python3} -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")}
 
-# RHEL == 6
-%if 0%{?rhel} == 6
-Requires: python-crypto
-%endif
+# Bundled provides
+Provides: bundled(python-backports-ssl_match_hostname) = 3.7.0.1
+Provides: bundled(python-distro) = 1.4.0
+Provides: bundled(python-ipaddress) = 1.0.22
+Provides: bundled(python-selectors2) = 1.1.1
+Provides: bundled(python-six) = 1.12.0
 
-# RHEL >=7
+%if 0%{?rhel} >= 8
+
+BuildRequires: python3-devel
+BuildRequires: python3-setuptools
+
+# man pages
+BuildRequires: python3-docutils
+
+# Tests
+BuildRequires: python3-jinja2
+BuildRequires: python3-PyYAML
+BuildRequires: python3-cryptography
+BuildRequires: python3-six
+
+BuildRequires: python3-pytest
+BuildRequires: python3-pytest-xdist
+BuildRequires: python3-pytest-mock
+BuildRequires: python3-requests
+BUildRequires: %{py3_dist coverage}
+BuildRequires: python3-mock
+# Not available in RHEL8, we'll just skip the tests where they apply
+#BuildRequires: python3-boto3
+#BuildRequires: python3-botocore
+BuildRequires: python3-systemd
+
+BuildRequires: git-core
+
+Requires: python3-jinja2
+
+Requires: python3-PyYAML
+Requires: python3-cryptography
+Requires: python3-six
+Requires: sshpass
+
+%else
 %if 0%{?rhel} >= 7
-Requires: python2-cryptography
-%endif
-
-# RHEL > 5
-%if 0%{?rhel} && 0%{?rhel} > 5
+# RHEL 7
 BuildRequires: python2-devel
 BuildRequires: python-setuptools
-Requires: PyYAML
-Requires: python-paramiko
+
+# For building docs
+BuildRequires: python-sphinx
+
+# Tests
+BuildRequires: python-jinja2
+BuildRequires: PyYAML
+BuildRequires: python2-cryptography
+BuildRequires: python-six
+
+# rhel7 does not have python-pytest but has pytest
+BuildRequires: pytest
+#BuildRequires: python-pytest-xdist
+#BuildRequires: python-pytest-mock
+BuildRequires: python-requests
+BuildRequires: python-coverage
+BuildRequires: python-mock
+BuildRequires: python-boto3
+#BuildRequires: python-botocore
+BuildRequires: git
+
+BuildRequires: python-paramiko
+BuildRequires: python-jmespath
+BuildRequires: python-passlib
+
 Requires: python-jinja2
-Requires: python-setuptools
+
+Requires: PyYAML
+Requires: python2-cryptography
 Requires: python-six
+Requires: sshpass
+
+# As of Ansible-2.9.0, we no longer depend on the optional dependencies jmespath or passlib
+# Users have to install those on their own
+Requires: python-paramiko
+
+# The ansible-doc package is no longer provided as of Ansible Engine 2.6.0
+Obsoletes: ansible-doc < 2.6.0
+%endif  # Requires for RHEL 7
+%endif  # Requires for RHEL 8
+
+
+# FEDORA >= 29
+%if 0%{?fedora} >= 29
+BuildRequires: python3-devel
+BuildRequires: python3-setuptools
+Requires: python3-PyYAML
+Requires: python3-paramiko
+Requires: python3-jinja2
+Requires: python3-httplib2
+Requires: python3-setuptools
+Requires: python3-six
+Requires: sshpass
 %endif
 
-# FEDORA > 17
-%if 0%{?fedora} >= 18
-BuildRequires: python-devel
-BuildRequires: python-setuptools
-Requires: PyYAML
-Requires: python-paramiko
-Requires: python-jinja2
-Requires: python-keyczar
-Requires: python-httplib2
-Requires: python-setuptools
-Requires: python-six
-%endif
-
-# SuSE/openSuSE
+# SUSE/openSUSE
 %if 0%{?suse_version}
 BuildRequires: python-devel
 BuildRequires: python-setuptools
 Requires: python-paramiko
 Requires: python-jinja2
-Requires: python-keyczar
 Requires: python-yaml
 Requires: python-httplib2
 Requires: python-setuptools
 Requires: python-six
+Requires: sshpass
 %endif
 
-Requires: sshpass
 
 %description
-
 Ansible is a radically simple model-driven configuration management,
-multi-node deployment, and orchestration engine. Ansible works
+multi-node deployment, and remote task execution system. Ansible works
 over SSH and does not require any software or daemons to be installed
 on remote nodes. Extension modules can be written in any language and
 are transferred to managed machines automatically.
 
+%package -n ansible-test
+Summary: Tool for testing ansible plugin and module code
+Requires: %{name} = %{version}-%{release}
+%if 0%{?rhel} >= 8
+# Will use the python3 stdlib venv
+#Requires: python3-virtualenv
+#BuildRequires: python3-virtualenv
+%else
+%if 0%{?rhel} >= 7
+Requires: python-virtualenv
+BuildRequires: python-virtualenv
+%endif  # Requires for RHEL 7
+%endif  # Requires for RHEL 8
+
+# SUSE/openSUSE
+%if 0%{?suse_version}
+Requires: python-virtualenv
+BuildRequires: python-virtualenv
+%endif
+
+%description -n ansible-test
+Ansible is a radically simple model-driven configuration management,
+multi-node deployment, and remote task execution system. Ansible works
+over SSH and does not require any software or daemons to be installed
+on remote nodes. Extension modules can be written in any language and
+are transferred to managed machines automatically.
+
+This package installs the ansible-test command for testing modules and plugins
+developed for ansible.
+
 %prep
-%setup -q
+%setup -q -n %{name}-%{upstream_version}
 
 %build
-%{__python2} setup.py build
+%if %{with_python2}
+%py2_build
+%endif
+
+%if %{with_python3}
+%py3_build
+%endif
 
 %install
+%if %{with_python2}
 %{__python2} setup.py install --root=%{buildroot}
-
-for i in %{buildroot}/%{_bindir}/{ansible,ansible-console,ansible-doc,ansible-galaxy,ansible-playbook,ansible-pull,ansible-vault}; do
+for i in %{buildroot}/%{_bindir}/{ansible,ansible-console,ansible-doc,ansible-galaxy,ansible-playbook,ansible-pull,ansible-vault}  ; do
     mv $i $i-%{python2_version}
     ln -s %{_bindir}/$(basename $i)-%{python2_version} $i
     ln -s %{_bindir}/$(basename $i)-%{python2_version} $i-2
 done
+%endif
+
+%if %{with_python3}
+%{__python3} setup.py install --root=%{buildroot}
+%endif
+
 
 # Amazon Linux doesn't install to dist-packages but python_sitelib expands to
 # that location and the python interpreter expects things to be there.
@@ -114,192 +227,86 @@ if expr x'%{python_sitelib}' : 'x.*dist-packages/\?' ; then
     fi
 fi
 
-mkdir -p %{buildroot}/etc/ansible/
-mkdir -p %{buildroot}/etc/ansible/roles/
-cp examples/hosts %{buildroot}/etc/ansible/
-cp examples/ansible.cfg %{buildroot}/etc/ansible/
+# Create system directories that Ansible defines as default locations in
+# ansible/config/base.yml
+DATADIR_LOCATIONS='%{_datadir}/ansible/collections
+%{_datadir}/ansible/plugins/doc_fragments
+%{_datadir}/ansible/plugins/action
+%{_datadir}/ansible/plugins/become
+%{_datadir}/ansible/plugins/cache
+%{_datadir}/ansible/plugins/callback
+%{_datadir}/ansible/plugins/cliconf
+%{_datadir}/ansible/plugins/connection
+%{_datadir}/ansible/plugins/filter
+%{_datadir}/ansible/plugins/httpapi
+%{_datadir}/ansible/plugins/inventory
+%{_datadir}/ansible/plugins/lookup
+%{_datadir}/ansible/plugins/modules
+%{_datadir}/ansible/plugins/module_utils
+%{_datadir}/ansible/plugins/netconf
+%{_datadir}/ansible/roles
+%{_datadir}/ansible/plugins/strategy
+%{_datadir}/ansible/plugins/terminal
+%{_datadir}/ansible/plugins/test
+%{_datadir}/ansible/plugins/vars'
+
+UPSTREAM_DATADIR_LOCATIONS=$(grep -ri default lib/ansible/config/base.yml| tr ':' '\n' | grep '/usr/share/ansible')
+
+if [ "$SYSTEM_LOCATIONS" != "$UPSTREAM_SYSTEM_LOCATIONS" ] ; then
+	echo "The upstream Ansible datadir locations have changed.  Spec file needs to be updated"
+	exit 1
+fi
+
+mkdir -p %{buildroot}%{_datadir}/ansible/plugins/
+for location in $DATADIR_LOCATIONS ; do
+	mkdir %{buildroot}"$location"
+done
+mkdir -p %{buildroot}%{_sysconfdir}/ansible/
+mkdir -p %{buildroot}%{_sysconfdir}/ansible/roles/
+
+cp examples/hosts %{buildroot}%{_sysconfdir}/ansible/
+cp examples/ansible.cfg %{buildroot}%{_sysconfdir}/ansible/
 mkdir -p %{buildroot}/%{_mandir}/man1/
 cp -v docs/man/man1/*.1 %{buildroot}/%{_mandir}/man1/
-mkdir -p %{buildroot}/%{_datadir}/ansible
+
+cp -pr docs/docsite/rst .
 
 %clean
 rm -rf %{buildroot}
 
+%check
+# We need pytest-4.5.0 or greater
+%if 0%{?fedora} >= 31
+ln -s /usr/bin/pytest-3 bin/pytest
+%{__python3} bin/ansible-test units -v --python %{python3_version}
+%endif
+
 %files
 %defattr(-,root,root)
-%{python_sitelib}/ansible*
 %{_bindir}/ansible*
-%dir %{_datadir}/ansible
-%config(noreplace) %{_sysconfdir}/ansible
-%doc README.rst PKG-INFO COPYING CHANGELOG.md
+%config(noreplace) %{_sysconfdir}/ansible/
+%doc README.rst PKG-INFO COPYING changelogs/CHANGELOG*.rst
 %doc %{_mandir}/man1/ansible*
+%{_datadir}/ansible/
+%if %{with_python3}
+%{python3_sitelib}/ansible*
+%exclude %{python3_sitelib}/ansible_test
+%endif
+%if %{with_python2}
+%{python2_sitelib}/ansible*
+%exclude %{python2_sitelib}/ansible_test
+%endif
+
+%files -n ansible-test
+%{_bindir}/ansible-test
+%if %{with_python3}
+%{python3_sitelib}/ansible_test
+%endif
+%if %{with_python2}
+%{python2_sitelib}/ansible_test
+%endif
 
 %changelog
 
-* Wed Feb 24 2016 Ansible, Inc. <info@ansible.com> - 2.0.1.0-1
-- Release 2.0.1.0-1
-
-* Thu Jan 14 2016 Ansible, Inc. <info@ansible.com> - 2.0.0.2-1
-- Release 2.0.0.2-1
-
-* Tue Jan 12 2016 Ansible, Inc. <info@ansible.com> - 2.0.0.1-1
-- Release 2.0.0.1-1
-
-* Tue Jan 12 2016 Ansible, Inc. <info@ansible.com> - 2.0.0.0-1
-- Release 2.0.0.0-1
-
-* Fri Oct 09 2015 Ansible, Inc. <info@ansible.com> - 1.9.4
-- Release 1.9.4
-
-* Thu Sep 03 2015 Ansible, Inc. <info@ansible.com> - 1.9.3
-- Release 1.9.3
-
-* Wed Jun 24 2015 Ansible, Inc. <info@ansible.com> - 1.9.2
-- Release 1.9.2
-
-* Mon Apr 27 2015 Ansible, Inc. <info@ansible.com> - 1.9.1
-- Release 1.9.1
-
-* Wed Mar 25 2015 Ansible, Inc. <info@ansible.com> - 1.9.0
-- Release 1.9.0
-
-* Thu Feb 19 2015 Ansible, Inc. <info@ansible.com> - 1.8.4
-- Release 1.8.4
-
-* Tue Feb 17 2015 Ansible, Inc. <info@ansible.com> - 1.8.3
-- Release 1.8.3
-
-* Thu Dec 04 2014 Michael DeHaan <michael@ansible.com> - 1.8.2
-- Release 1.8.2
-
-* Wed Nov 26 2014 Michael DeHaan <michael@ansible.com> - 1.8.1
-- Release 1.8.1
-
-* Tue Nov 25 2014 Michael DeHaan <michael@ansible.com> - 1.8.0
-- Release 1.8.0
-
-* Wed Sep 24 2014 Michael DeHaan <michael@ansible.com> - 1.7.2
-- Release 1.7.2
-
-* Thu Aug 14 2014 Michael DeHaan <michael@ansible.com> - 1.7.1
-- Release 1.7.1
-
-* Wed Aug 06 2014 Michael DeHaan <michael@ansible.com> - 1.7.0
-- Release 1.7.0
-
-* Fri Jul 25 2014 Michael DeHaan <michael@ansible.com> - 1.6.10
-- Release 1.6.10
-
-* Thu Jul 24 2014 Michael DeHaan <michael@ansible.com> - 1.6.9
-- Release 1.6.9
-
-* Tue Jul 22 2014 Michael DeHaan <michael@ansible.com> - 1.6.8
-- Release 1.6.8
-
-* Mon Jul 21 2014 Michael DeHaan <michael@ansible.com> - 1.6.7
-- Release 1.6.7
-
-* Tue Jul 01 2014 Michael DeHaan <michael@ansible.com> - 1.6.6
-- Release 1.6.6
-
-* Wed Jun 25 2014 Michael DeHaan <michael@ansible.com> - 1.6.5
-- Release 1.6.5
-
-* Wed Jun 25 2014 Michael DeHaan <michael@ansible.com> - 1.6.4
-- Release 1.6.4
-
-* Mon Jun 09 2014 Michael DeHaan <michael@ansible.com> - 1.6.3
-- Release 1.6.3
-
-* Fri May 23 2014 Michael DeHaan <michael@ansible.com> - 1.6.2
-- Release 1.6.2
-
-* Wed May 07 2014 Michael DeHaan <michael@ansible.com> - 1.6.1
-- Release 1.6.1
-
-* Mon May 05 2014 Michael DeHaan <michael@ansible.com> - 1.6.0
-- Release 1.6.0
-
-* Fri Apr 18 2014 Michael DeHaan <michael@ansible.com> - 1.5.5
-- Release 1.5.5
-
-* Tue Apr 01 2014 Michael DeHaan <michael@ansible.com> - 1.5.4
-- Release 1.5.4
-
-* Thu Mar 13 2014 Michael DeHaan <michael@ansible.com> - 1.5.3
-- Release 1.5.3
-
-* Tue Mar 11 2014 Michael DeHaan <michael@ansible.com> - 1.5.2
-- Release 1.5.2
-
-* Mon Mar 10 2014 Michael DeHaan <michael@ansible.com> - 1.5.1
-- Release 1.5.1
-
-* Fri Feb 28 2014 Michael DeHaan <michael@ansible.com> - 1.5.0
-- Release 1.5.0
-
-* Fri Feb 28 2014 Michael DeHaan <michael.dehaan@gmail.com> - 1.5-0
-* Release 1.5
-
-* Wed Feb 12 2014 Michael DeHaan <michael.dehaan@gmail.com> - 1.4.5
-* Release 1.4.5
-
-* Mon Jan 06 2014 Michael DeHaan <michael.dehaan@gmail.com> - 1.4.4
-* Release 1.4.4
-
-* Fri Dec 20 2013 Michael DeHaan <michael.dehaan@gmail.com> - 1.4.3
-* Release 1.4.3
-
-* Wed Dec 18 2013 Michael DeHaan <michael.dehaan@gmail.com> - 1.4.2
-* Release 1.4.2
-
-* Wed Nov 27 2013 Michael DeHaan <michael.dehaan@gmail.com> - 1.4-1
-* Release 1.4.1
-
-* Thu Nov 21 2013 Michael DeHaan <michael.dehaan@gmail.com> - 1.4-0
-* Release 1.4.0
-
-* Fri Sep 13 2013 Michael DeHaan <michael.dehaan@gmail.com> - 1.3-0
-* Release 1.3.0
-
-* Fri Jul 05 2013 Michael DeHaan <michael.dehaan@gmail.com> - 1.2-2
-* Release 1.2.2
-
-* Thu Jul 04 2013 Michael DeHaan <michael.dehaan@gmail.com> - 1.2-1
-* Release 1.2.1
-
-* Mon Jun 10 2013 Michael DeHaan <michael.dehaan@gmail.com> - 1.2-0
-* Release 1.2
-
-* Tue Apr 2 2013 Michael DeHaan <michael.dehaan@gmail.com> - 1.1-0
-* Release 1.1
-
-* Fri Feb 1 2013 Michael DeHaan <michael.dehaan@gmail.com> - 1.0-0
-- Release 1.0
-
-* Fri Nov 30 2012 Michael DeHaan <michael.dehaan@gmail.com> - 0.9-0
-- Release 0.9
-
-* Fri Oct 19 2012 Michael DeHaan <michael.dehaan@gmail.com> - 0.8-0
-- Release of 0.8
-
-* Mon Aug 6 2012 Michael DeHaan <michael.dehaan@gmail.com> - 0.7-0
-- Release of 0.7
-
-* Mon Aug 6 2012 Michael DeHaan <michael.dehaan@gmail.com> - 0.6-0
-- Release of 0.6
-
-* Wed Jul 4 2012 Michael DeHaan <michael.dehaan@gmail.com> - 0.5-0
-- Release of 0.5
-
-* Wed May 23 2012 Michael DeHaan <michael.dehaan@gmail.com> - 0.4-0
-- Release of 0.4
-
-* Mon Apr 23 2012 Michael DeHaan <michael.dehaan@gmail.com> - 0.3-1
-- Release of 0.3
-
-* Tue Apr  3 2012 John Eckersberg <jeckersb@redhat.com> - 0.0.2-1
-- Release of 0.0.2
-
-* Sat Mar 10 2012  <tbielawa@redhat.com> - 0.0.1-1
-- Release of 0.0.1
+* %{release_date} Ansible, Inc. <info@ansible.com> - %{rpmversion}-%{rpmrelease}
+- Release %{rpmversion}-%{rpmrelease}

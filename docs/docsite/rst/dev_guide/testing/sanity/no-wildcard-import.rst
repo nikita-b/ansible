@@ -1,5 +1,7 @@
-Sanity Tests » no-wildcard-import
-=================================
+:orphan:
+
+no-wildcard-import
+==================
 
 Using :code:`import *` is a bad habit which pollutes your namespace, hinders
 debugging, and interferes with static analysis of code.  For those reasons, we

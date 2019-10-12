@@ -113,29 +113,9 @@ RETURN = '''
 ...
 '''
 
+import json
 import socket
 import types
-
-HAS_LIB_JSON = True
-try:
-    import json
-    # Detect the python-json library which is incompatible
-    # Look for simplejson if that's the case
-    try:
-        if (
-            not isinstance(json.loads, types.FunctionType) or
-            not isinstance(json.dumps, types.FunctionType)
-        ):
-            raise ImportError
-    except AttributeError:
-        raise ImportError
-except ImportError:
-    try:
-        import simplejson as json
-    except ImportError:
-        HAS_LIB_JSON = False
-    except SyntaxError:
-        HAS_LIB_JSON = False
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.six.moves.urllib.parse import urlencode
@@ -205,7 +185,7 @@ class LogicMonitor(object):
         resp = self.rpc("getAgents", {})
         resp_json = json.loads(resp)
 
-        if resp_json["status"] is 200:
+        if resp_json["status"] == 200:
             self.module.debug("RPC call succeeded")
             return resp_json["data"]
         else:
@@ -389,7 +369,7 @@ class LogicMonitor(object):
 class Host(LogicMonitor):
 
     def __init__(self, params, module=None):
-        """Initializor for the LogicMonitor host object"""
+        """Initializer for the LogicMonitor host object"""
         self.change = False
         self.params = params
         self.collector = None
@@ -489,7 +469,7 @@ class Host(LogicMonitor):
 class Hostgroup(LogicMonitor):
 
     def __init__(self, params, module=None):
-        """Initializor for the LogicMonitor host object"""
+        """Initializer for the LogicMonitor host object"""
         self.change = False
         self.params = params
 
@@ -576,9 +556,6 @@ def main():
         ),
         supports_check_mode=True
     )
-
-    if HAS_LIB_JSON is not True:
-        module.fail_json(msg="Unable to load JSON library")
 
     selector(module)
 

@@ -86,7 +86,7 @@ EXAMPLES = """
   ios_system:
     hostname: ios01
     domain_name: test.example.com
-    domain-search:
+    domain_search:
       - ansible.com
       - redhat.com
       - cisco.com
@@ -120,7 +120,7 @@ import re
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.network.ios.ios import get_config, load_config
-from ansible.module_utils.network.ios.ios import ios_argument_spec, check_args
+from ansible.module_utils.network.ios.ios import ios_argument_spec
 from ansible.module_utils.network.common.utils import ComplexList
 
 _CONFIGURED_VRFS = None
@@ -254,7 +254,7 @@ def parse_hostname(config):
 
 
 def parse_domain_name(config):
-    match = re.findall(r'^ip domain name (?:vrf (\S+) )*(\S+)', config, re.M)
+    match = re.findall(r'^ip domain[- ]name (?:vrf (\S+) )*(\S+)', config, re.M)
     matches = list()
     for vrf, name in match:
         if not vrf:
@@ -264,7 +264,7 @@ def parse_domain_name(config):
 
 
 def parse_domain_search(config):
-    match = re.findall(r'^ip domain list (?:vrf (\S+) )*(\S+)', config, re.M)
+    match = re.findall(r'^ip domain[- ]list (?:vrf (\S+) )*(\S+)', config, re.M)
     matches = list()
     for vrf, name in match:
         if not vrf:
@@ -285,7 +285,7 @@ def parse_name_servers(config):
 
 
 def parse_lookup_source(config):
-    match = re.search(r'ip domain lookup source-interface (\S+)', config, re.M)
+    match = re.search(r'ip domain[- ]lookup source-interface (\S+)', config, re.M)
     if match:
         return match.group(1)
 
@@ -297,7 +297,7 @@ def map_config_to_obj(module):
         'domain_name': parse_domain_name(config),
         'domain_search': parse_domain_search(config),
         'lookup_source': parse_lookup_source(config),
-        'lookup_enabled': 'no ip domain lookup' not in config,
+        'lookup_enabled': 'no ip domain lookup' not in config and 'no ip domain-lookup' not in config,
         'name_servers': parse_name_servers(config)
     }
 
@@ -360,7 +360,6 @@ def main():
     result = {'changed': False}
 
     warnings = list()
-    check_args(module, warnings)
     result['warnings'] = warnings
 
     want = map_params_to_obj(module)
@@ -375,6 +374,7 @@ def main():
         result['changed'] = True
 
     module.exit_json(**result)
+
 
 if __name__ == "__main__":
     main()

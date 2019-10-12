@@ -82,6 +82,7 @@ import re
 
 from ansible.module_utils.network.nxos.nxos import load_config, run_commands
 from ansible.module_utils.network.nxos.nxos import get_capabilities, nxos_argument_spec
+from ansible.module_utils.network.nxos.nxos import get_interface_type
 from ansible.module_utils.basic import AnsibleModule
 
 
@@ -95,23 +96,6 @@ def execute_show_command(command, module):
         'output': output,
     }]
     return run_commands(module, cmds)[0]
-
-
-def get_interface_type(interface):
-    if interface.upper().startswith('ET'):
-        return 'ethernet'
-    elif interface.upper().startswith('VL'):
-        return 'svi'
-    elif interface.upper().startswith('LO'):
-        return 'loopback'
-    elif interface.upper().startswith('MG'):
-        return 'management'
-    elif interface.upper().startswith('MA'):
-        return 'management'
-    elif interface.upper().startswith('PO'):
-        return 'portchannel'
-    else:
-        return 'unknown'
 
 
 def get_interface_mode(interface, intf_type, module):
@@ -226,12 +210,9 @@ def main():
                              'configuring a VRF on an interface. You can '
                              'use nxos_interface')
 
-    proposed = dict(interface=interface, vrf=vrf)
-
     current_vrf = get_interface_info(interface, module)
     existing = dict(interface=interface, vrf=current_vrf)
     changed = False
-    end_state = existing
 
     if not existing['vrf']:
         pass
@@ -263,8 +244,6 @@ def main():
         else:
             load_config(module, commands)
             changed = True
-            changed_vrf = get_interface_info(interface, module)
-            end_state = dict(interface=interface, vrf=changed_vrf)
             if 'configure' in commands:
                 commands.pop(0)
 
